@@ -74,7 +74,7 @@ class FC_block(nn.Module):
         super().__init__()
         self.hparams=hparams
         self.lin=Lin_bidirectional(hparams)
-        self.act=Square(hparams)
+        self.act=Prelu(hparams)
     def forward(self,x):
         return self.act(self.lin(x))
     def inverse(self,x):
@@ -96,9 +96,8 @@ class FC_net(nn.Module):
         return x
     def inverse(self,x):
         state=[x,torch.tensor(0.0,requires_grad=True)] #current inverse, log determinant
-        for i in range(self.hparams['blocks']-1,-1,-1):
-            inv=self.blocks[i].inverse(state[0])
-            #print(inv[1])
+        for block in reversed(self.blocks):
+            inv=block.inverse(state[0])
             state[0]=inv[0]
             state[1]=state[1]+inv[1]
         return state
