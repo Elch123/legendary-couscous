@@ -4,10 +4,10 @@ import torch.nn.functional as F
 #print(dir(F))
 hparams={
 'channels':10,
-'lr':.005,
-'batches':10000,
-'batch_size':10,
-'blocks':3
+'lr':.0003,
+'batches':100000,
+'batch_size':100,
+'blocks':40
 }
 #For all these classes, the inverse is the first return, the log determinant is the second
  #HAHA! make sure to be smart with the means I am taking, and not take a mean over the batch dimesion!!!
@@ -17,7 +17,7 @@ class Lin_bidirectional(nn.Module):
         super().__init__()
         self.hparams=hparams
         self.linweight=nn.Parameter(torch.empty(size=(hparams['channels'],hparams['channels'])))
-        torch.nn.init.orthogonal_(self.linweight)
+        torch.nn.init.orthogonal_(self.linweight) #orthogonal
         self.register_parameter("w",self.linweight)
     def forward(self,x):
         return F.linear(x,self.linweight)
@@ -40,18 +40,60 @@ class Prelu(nn.Module):
         logdet=torch.sum(logdet,dim=1)
         #print("Prelu logdet "+str(logdet))
         return (inv,logdet)
+class Affine(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        self.act=torch.nn.ReLU()
+        self.lina=torch.nn.Linear(hparams['channels']//2,hparams['channels'])
+        self.mults=torch.nn.Linear(hparams['channels'],hparams['channels']//2)
+        self.adds=torch.nn.Linear(hparams['channels'],hparams['channels']//2)
+        self.ms=nn.Parameter(torch.zeros(size=(hparams['channels']//2,)))
+    def compute_nets(self,x):
+        x=self.act(x)
+        x=self.lina(x)
+        x=self.act(x)
+        m=self.mults(x)*self.ms
+        a=self.adds(x)
+        return (m,a)
+    def forward(self,data):
+        x=data[:,0:self.hparams['channels']//2]
+        y=data[:,self.hparams['channels']//2:self.hparams['channels']]
+        (m,a)=self.compute_nets(x)
+        data=torch.cat((x,y*torch.exp(m)+a),dim=1)
+        return data
+    def inverse(self,data):
+        x=data[:,0:self.hparams['channels']//2]
+        (m,a)=self.compute_nets(x)
+        y=data[:,self.hparams['channels']//2:self.hparams['channels']]
+        data=torch.cat((x,(y-a)/torch.exp(m)),dim=1)
+        logdet=torch.sum(m,dim=1)
+        return (data,logdet)
 class Square(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
     def forward(self,x):
-        y=x**2*torch.sign(x).float()
+        y=x**2*torch.sign(x).float()/2
         #print(y)
         return y
     def inverse(self,x):
         #print(x)
+        x*=2
         inv=torch.abs(x)**(1/2)*torch.sign(x).float()
-        logdet=torch.sum(torch.log(2*torch.abs(inv)),dim=1)
+        logdet=torch.sum(torch.log(torch.abs(inv)),dim=1)
+        #print(torch.mean(logdet))
+        return (inv,logdet)
+class Tan(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+    def forward(self,x):
+        y=torch.tan(x)
+        return y
+    def inverse(self,x):
+        inv=torch.atan(x)
+        logdet=torch.sum(-torch.log(torch.cos(inv)**2),dim=1)
         #print(torch.mean(logdet))
         return (inv,logdet)
 class Addone(nn.Module):
@@ -68,13 +110,24 @@ class Addone(nn.Module):
         logdet=0
         #print(torch.mean(logdet))
         return (inv,logdet)
-
+class Identity(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+    def forward(self,x):
+        return x
+    def inverse(self,x):
+        #print(x)
+        inv=x
+        logdet=0
+        #print(torch.mean(logdet))
+        return (inv,logdet)
 class FC_block(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
         self.lin=Lin_bidirectional(hparams)
-        self.act=Prelu(hparams)
+        self.act=Affine(hparams)
     def forward(self,x):
         return self.act(self.lin(x))
     def inverse(self,x):
@@ -101,9 +154,9 @@ class FC_net(nn.Module):
             state[0]=inv[0]
             state[1]=state[1]+inv[1]
         return state
-def make_normal_batch(size):
+def make_normal_batch(size,batch_size):
     m = torch.distributions.MultivariateNormal(torch.zeros(size), scale_tril=torch.eye(size)) #zero mean, identity covariancm.samplee
-    data=m.sample((100,))
+    data=m.sample((batch_size,))
     return data
 def negative_log_gaussian_density(data):
     #this assumes a mean of zero, and a standard devation of one. The coefficient will probably be important, so I'm keeping that.
@@ -113,37 +166,45 @@ def negative_log_gaussian_density(data):
     return nll
 net=FC_net(hparams)
 optimizer = torch.optim.SGD(net.parameters(), lr=hparams['lr'], momentum=0.9,nesterov=True)
-x=make_normal_batch(10)
-def make_batch(size):
+x=make_normal_batch(10,1)
+def make_batch(size,batch_size):
     dist=torch.distributions.OneHotCategorical(probs=torch.ones(size=(size,)))
     m = torch.distributions.MultivariateNormal(torch.zeros(size), scale_tril=torch.eye(size))
-    target=0*dist.sample((100,))+torch.abs(1.0*m.sample((100,)))
+    target=1*dist.sample((batch_size,))+.01*m.sample((batch_size,))
     return target
+def modelprint():
+    print(make_batch(hparams['channels'],hparams['batch_size']))
+    print(net(make_normal_batch(hparams['channels'],hparams['batch_size'])))
 def train():
     for e in range(hparams['batches']):
         #10*make_normal_batch(hparams['batch_size'])
-        target=make_batch(hparams['channels'])
+        target=make_batch(hparams['channels'],hparams['batch_size'])
         #print(target)
         start=net.inverse(target)
         distloss=negative_log_gaussian_density(start[0])/hparams['channels']
-        print("distribution loss " + str(torch.mean(distloss)))
         jacloss=start[1]/hparams['channels']
-        print("Transformation loss " + str(torch.mean(jacloss)))
         loss=distloss+jacloss
         loss=torch.mean(loss)
-        print(loss)
+        if(e%1==0):
+            print("distribution loss " + str(torch.mean(distloss)))
+            print("Transformation loss " + str(torch.mean(jacloss)))
+            print(loss)
+        if(e%500==0):
+            modelprint()
         net.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), 10)
         optimizer.step()
 def verify():
-    batch=make_batch(hparams['batch_size'])
+    batch=make_batch(hparams['channels'],hparams['batch_size'])
     passed=net(net.inverse(batch)[0])
     passedtwo=net.inverse(net(batch))[0]
     print(torch.mean(batch-passed))
     print(torch.mean(batch-passedtwo))
+
 verify()
-#train()
-#print(net(make_normal_batch(hparams['batch_size'])))
+train()
+verify()
+
 
 #print(net.lin.linweight)
