@@ -1,7 +1,7 @@
 import sentencepiece as spm
 import numpy as np
 import pickle
-import makeendeprocessors
+from loader import makeendeprocessors
 (enprocessor,deprocessor)=makeendeprocessors()
 
 def maxlen(langa,langb):
@@ -11,9 +11,13 @@ class Batch_maker():
     def __init__(self,filename):
         with open(filename,'rb') as pairedtext:
             self.text=pickle.load(pairedtext)
+            print(self.text[0][100000])
+
     def maxlen(self,langa,langb):
         return max(len(langa),len(langb))
-    def makebatch(self,maxsymbols):
+
+    def make_batch(self,maxsymbols):
+        print(type(self))
         numstrings=len(self.text[1])
         topi=np.random.randint(numstrings)
         #strlen=max(maxlen(self.text[0][topi],self.text[1][topi]),4)
@@ -32,5 +36,5 @@ class Batch_maker():
             if(batch.shape[1]==0 or batch.shape[2]==0):
                 return self.makebatch(maxsymbols)
         return batch
-b=Batch_maker()
-print(Batch_maker.make_batch(100))
+b=Batch_maker("traindeen.pickle")
+print(Batch_maker.make_batch(100,100))
