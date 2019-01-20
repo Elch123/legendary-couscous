@@ -1,4 +1,3 @@
-import sentencepiece as spm
 import numpy as np
 import pickle
 from loader import makeendeprocessors
@@ -12,18 +11,16 @@ class Batch_maker():
         with open(filename,'rb') as pairedtext:
             self.text=pickle.load(pairedtext)
             print(self.text[0][100000])
-
     def maxlen(self,langa,langb):
         return max(len(langa),len(langb))
 
     def make_batch(self,maxsymbols):
-        print(type(self))
         numstrings=len(self.text[1])
         topi=np.random.randint(numstrings)
         #strlen=max(maxlen(self.text[0][topi],self.text[1][topi]),4)
-        strlen=int(len(self.text[1][topi])*2+6)
+        strlen=int(len(self.text[1][topi])*1.3+4)
         numback=max(maxsymbols//strlen,1)
-        numback=numback+min(0,topi-numback)#clip number of elements going back if it is less than zero, to not overrun start of array.
+        numback=numback+min(0,topi-numback)#clip number of elements going back if it is less than zero, to not overrun start of array. Watch that zero
         fronti=topi-numback
         batch=np.zeros(shape=(2,numback,strlen),dtype=np.int32)
         for i in range(numback):
@@ -37,4 +34,4 @@ class Batch_maker():
                 return self.makebatch(maxsymbols)
         return batch
 b=Batch_maker("traindeen.pickle")
-print(Batch_maker.make_batch(100,100))
+print(b.make_batch(100))

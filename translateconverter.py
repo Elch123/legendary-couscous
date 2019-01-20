@@ -13,7 +13,7 @@ def loadtobpe(processor,filepath,start,end):
         maxlen=len(f)
         for (count,line) in enumerate(f):
             if(count/maxlen>start and count/maxlen<end ): #
-                data=processor.encode(line)
+                data=processor.encode_ids(line)
                 lines.append(np.array(data))
                 if(count%1000==0):
                     print(count)

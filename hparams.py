@@ -5,4 +5,5 @@ hparams={
 'batch_size':50,
 'blocks':60,
 'dim':50,
+'embed_symbols':10000,
 }

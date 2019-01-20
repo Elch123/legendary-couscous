@@ -1,14 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-#print(dir(F))
-hparams={
-'channels':10,
-'lr':.0003,
-'batches':500001,
-'batch_size':50,
-'blocks':60
-}
+from hparams import hparams
+
 torch.set_printoptions(threshold=100000)
 #For all these classes, the inverse is the first return, the log determinant is the second
  #HAHA! make sure to be smart with the means I am taking, and not take a mean over the batch dimesion!!!
