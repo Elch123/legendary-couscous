@@ -10,7 +10,7 @@ class Batch_maker():
     def __init__(self,filename):
         with open(filename,'rb') as pairedtext:
             self.text=pickle.load(pairedtext)
-            print(self.text[0][100000])
+            #print(self.text[0][100000])
     def maxlen(self,langa,langb):
         return max(len(langa),len(langb))
 
@@ -33,5 +33,5 @@ class Batch_maker():
             if(batch.shape[1]==0 or batch.shape[2]==0):
                 return self.makebatch(maxsymbols)
         return batch
-b=Batch_maker("traindeen.pickle")
-print(b.make_batch(100))
+#b=Batch_maker("traindeen.pickle")
+#print(b.make_batch(1000).shape)
