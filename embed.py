@@ -23,7 +23,7 @@ class BpEmbed(nn.Module):
         vector=vector.numpy()
         errors=self.processor.vectors-vector
         errors**=2 #produce squared error among all vectors
-        index=np.argmin(errors.mean(axis=1))
+        index=np.argmin(errors.mean(axis=-1))
         return index
 """
 b=BpEmbed(hparams,bpemb_en)

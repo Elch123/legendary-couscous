@@ -3,51 +3,72 @@ import torch.nn as nn
 import torch.nn.functional as F
 from hparams import hparams
 
-class Lin_bidirectional(nn.Module):
+
+class Conv1d(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
-        self.linweight=nn.Parameter(torch.empty(size=(hparams['channels'],hparams['channels'])))
+        self.linweight=nn.Parameter(torch.empty(size=(hparams['dim'],hparams['dim'])))
         torch.nn.init.orthogonal_(self.linweight) #orthogonal
         self.register_parameter("w",self.linweight)
-        self.bias=nn.Parameter(torch.zeros(size=(hparams['channels'],)))
+        self.bias=nn.Parameter(torch.zeros(size=(1,hparams['dim'],1,)))
         self.register_parameter("b",self.bias)
     def forward(self,x):
-        return F.linear(x,self.linweight)+self.bias
+        return F.conv1d(x,torch.unsqueeze(self.linweight,-1))+self.bias
     def inverse(self,x):
         x=x-self.bias
-        invlin=F.linear(x,torch.inverse(self.linweight))
-        logdet=torch.slogdet(self.linweight)[1]#/self.hparams['channels']
+        invlin=F.conv1d(x,torch.unsqueeze(torch.inverse(self.linweight),-1))
+        logdet=torch.slogdet(self.linweight)[1]#/self.hparams['dim']
         #print("Conv logdet " + str(logdet))
         return (invlin,logdet)
-class Res_block(nn.Module):
+class Conv_block(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
         self.act=torch.nn.ReLU()
-        self.lina=torch.nn.Linear(hparams['channels']//2,hparams['channels']//2)
-        self.linb=torch.nn.Linear(hparams['channels']//2,hparams['channels']//2)
+        self.conva=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,3,padding=1)
+        self.convb=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,3,padding=1)
+        self.multiply_conv=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
+        self.add_conv=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
+        self.ms=nn.Parameter(torch.zeros(size=(1,hparams['dim']//2,1)))
     def forward(self,x):
-        prex=x
+        x=self.conva(x)
         x=self.act(x)
-        x=self.lina(x)
+        x=self.convb(x)
         x=self.act(x)
-        x=self.linb(x)
-        x+=prex
-        return x
-
+        m=self.multiply_conv(x)*self.ms
+        a=self.add_conv(x)
+        return (m,a)
+class Affine1d(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        self.block=Conv_block(hparams)
+    def forward(self,data):
+        x=data[:,0:self.hparams['dim']//2,:]
+        y=data[:,self.hparams['dim']//2:self.hparams['dim'],:]
+        (m,a)=self.block(x)
+        out=torch.cat((x,y*torch.exp(m)+a),dim=1)
+        return out
+    def inverse(self,data):
+        x=data[:,0:self.hparams['dim']//2,:]
+        (m,a)=self.block(x)
+        y=data[:,self.hparams['dim']//2:self.hparams['dim'],:]
+        data=torch.cat((x,(y-a)/torch.exp(m)),dim=1)
+        logdet=torch.sum(m,dim=1)
+        return (data,logdet)
 class Affine(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
         self.act=torch.nn.ReLU()
-        self.lina=torch.nn.Linear(hparams['channels']//2,hparams['channels']//2)
-        self.linb=torch.nn.Linear(hparams['channels']//2,hparams['channels']//2)
-        self.linc=torch.nn.Linear(hparams['channels']//2,hparams['channels']//2)
-        self.lind=torch.nn.Linear(hparams['channels']//2,hparams['channels']//2)
-        self.mults=torch.nn.Linear(hparams['channels']//2,hparams['channels']//2)
-        self.adds=torch.nn.Linear(hparams['channels']//2,hparams['channels']//2)
-        self.ms=nn.Parameter(torch.zeros(size=(hparams['channels']//2,)))
+        self.lina=torch.nn.Linear(hparams['dim']//2,hparams['dim']//2)
+        self.linb=torch.nn.Linear(hparams['dim']//2,hparams['dim']//2)
+        self.linc=torch.nn.Linear(hparams['dim']//2,hparams['dim']//2)
+        self.lind=torch.nn.Linear(hparams['dim']//2,hparams['dim']//2)
+        self.mults=torch.nn.Linear(hparams['dim']//2,hparams['dim']//2)
+        self.adds=torch.nn.Linear(hparams['dim']//2,hparams['dim']//2)
+        self.ms=nn.Parameter(torch.zeros(size=(hparams['dim']//2,)))
     def compute_nets(self,x):
         prex=x
         x=self.act(x)
@@ -66,15 +87,15 @@ class Affine(nn.Module):
         a=self.adds(x)
         return (m,a)
     def forward(self,data):
-        x=data[:,0:self.hparams['channels']//2]
-        y=data[:,self.hparams['channels']//2:self.hparams['channels']]
+        x=data[:,0:self.hparams['dim']//2]
+        y=data[:,self.hparams['dim']//2:self.hparams['dim']]
         (m,a)=self.compute_nets(x)
         data=torch.cat((x,y*torch.exp(m)+a),dim=1)
         return data
     def inverse(self,data):
-        x=data[:,0:self.hparams['channels']//2]
+        x=data[:,0:self.hparams['dim']//2]
         (m,a)=self.compute_nets(x)
-        y=data[:,self.hparams['channels']//2:self.hparams['channels']]
+        y=data[:,self.hparams['dim']//2:self.hparams['dim']]
         data=torch.cat((x,(y-a)/torch.exp(m)),dim=1)
         logdet=torch.sum(m,dim=1)
         return (data,logdet)
@@ -83,8 +104,8 @@ class FC_block(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
-        self.lin=Lin_bidirectional(hparams)
-        self.act=Affine(hparams)#Parametric_Affine
+        self.lin=Conv1d(hparams)
+        self.act=Affine1d(hparams)#Parametric_Affine
     def forward(self,x):
         return self.act(self.lin(x))
     def inverse(self,x):
@@ -97,7 +118,7 @@ class Net(nn.Module):
         super().__init__()
         self.hparams=hparams
         blocks=[FC_block(hparams) for i in range(hparams['blocks'])] #FC_block
-        blocks.append(Lin_bidirectional(hparams))
+        blocks.append(Conv1d(hparams))
         #print(blocks)
         self.blocks=nn.ModuleList(blocks)
     def forward(self,x):
