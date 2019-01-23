@@ -43,7 +43,7 @@ class Conv_block(nn.Module):
         x=self.convb(x)
         x=self.act(x)
         m=self.multiply_conv(x)*self.mscale
-        a=self.add_conv(x)*self.ascale
+        a=self.add_conv(x)#*self.ascale
         return (m,a)
 class Affine1d(nn.Module):
     def __init__(self,hparams):
@@ -97,9 +97,10 @@ class Net(nn.Module):
             x=block(x)
         return x
     def inverse(self,x):
-        state=[x,torch.tensor(0.0,requires_grad=True)] #current inverse, log determinant
+        state=[x,0] #current inverse, log determinant
         for block in reversed(self.blocks):
             inv=block.inverse(state[0])
             state[0]=inv[0]
             state[1]=state[1]+inv[1]
+        state[0]*10
         return state

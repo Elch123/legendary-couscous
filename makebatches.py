@@ -16,9 +16,10 @@ class Batch_maker():
 
     def make_batch(self,maxsymbols):
         numstrings=len(self.text[1])
-        topi=np.random.randint(numstrings)
-        #strlen=max(maxlen(self.text[0][topi],self.text[1][topi]),4)
-        strlen=int(len(self.text[1][topi])*1.3+4)
+        strlen=1000
+        while(strlen>150):
+            topi=np.random.randint(numstrings)
+            strlen=int(len(self.text[1][topi])*1.3+4)
         numback=max(maxsymbols//strlen,1)
         numback=numback+min(0,topi-numback)#clip number of elements going back if it is less than zero, to not overrun start of array. Watch that zero
         fronti=topi-numback
