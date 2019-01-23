@@ -11,9 +11,9 @@ class Conv1d(nn.Module):
         self.hparams=hparams
         self.linweight=Parameter(torch.empty(size=(hparams['dim'],hparams['dim'])))
         torch.nn.init.orthogonal_(self.linweight) #orthogonal
-        self.register_parameter("w",self.linweight)
+        #self.register_parameter("w",self.linweight)
         self.bias=Parameter(torch.zeros(size=(1,hparams['dim'],1,)))
-        self.register_parameter("b",self.bias)
+        #self.register_parameter("b",self.bias)
     def forward(self,x):
         return F.conv1d(x,torch.unsqueeze(self.linweight,-1))+self.bias
     def inverse(self,x):
