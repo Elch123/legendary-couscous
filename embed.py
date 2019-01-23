@@ -15,12 +15,22 @@ class BpEmbed(nn.Module):
     def forward(self,x):
         return self.embed(x)
     def disembed(self,x):
+        x=x.detach().numpy()
         indexs=np.zeros(shape=(len(x),),dtype=np.int32)
         for i in range(len(indexs)):
             indexs[i]=self.nn(x[i])
         return indexs
+    def disembed_batch(self,x):
+        x=x.detach().numpy()
+        indexs=np.zeros(shape=(x.shape[0],x.shape[2]),dtype=np.int32)
+        for i in range(x.shape[0]):
+            for j in range(x.shape[2]):
+                indexs[i,j]=self.nn(x[i,:,j])
+        text=[]
+        for sentence in indexs:
+            text.append(self.processor.decode_ids(sentence))
+        return text
     def nn(self,vector):
-        vector=vector.numpy()
         errors=self.processor.vectors-vector
         errors**=2 #produce squared error among all vectors
         index=np.argmin(errors.mean(axis=-1))
