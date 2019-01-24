@@ -26,6 +26,8 @@ def make_normal_batch(batch_size,channels,seqlen):
     data=m.sample((batch_size,))
     data=data.reshape(batch_size,channels,seqlen)
     return data
+def make_normal_batch_like(b):
+    return make_normal_batch(b.shape[0],b.shape[1],b.shape[2])
 def negative_log_gaussian_density(data):
     #this assumes a mean of zero, and a standard devation of one. The coefficient will probably be important, so I'm keeping that.
     size=data.shape[-1]
@@ -36,6 +38,8 @@ def negative_log_gaussian_density(data):
 def make_batch(batch_size):
     batch=maker.make_batch(batch_size)[0] #English, not German
     embedded=engbpe(torch.tensor(batch).long()).permute(0,2,1)
+    noise=make_normal_batch_like(embedded)*.05
+    embedded+=noise
     print(embedded.shape)
     return embedded
 def decode_print(data):
@@ -45,7 +49,7 @@ def decode_print(data):
 def modelprint():
     b=make_batch(hparams['batch_size'])
     decode_print(b)
-    decode_print(net(make_normal_batch(b.shape[0],b.shape[1],b.shape[2]).to(device)).cpu())
+    decode_print(net(make_normal_batch_like(b).to(device)).cpu())
 def print_numpy(description,data):
     print(description+str(data.detach().cpu().numpy()))
 def verify():
@@ -75,10 +79,11 @@ def train():
         loss=distloss+jacloss
         loss=torch.mean(loss)
         net.zero_grad()
-        print(loss)
-        loss.backward()
-        #torch.nn.utils.clip_grad_norm_(net.parameters(), 10)
-        optimizer.step()
+        #print(loss)
+        if not torch.isnan(loss):
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 10)
+            optimizer.step()
         if(e%1==0):
             print_numpy("Log likelihood loss " ,torch.mean(distloss))
             print_numpy("Log determinant jacobian  " ,torch.mean(jacloss))

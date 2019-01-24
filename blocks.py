@@ -4,7 +4,29 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 from hparams import hparams
 
-
+class Pos_Encoding_Like(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        pe = Parameter(torch.zeros(1,hparams['dim'],hparams['batch_size']),requires_grad=False)
+        for p in range(hparams['batch_size']):
+            for i in range(0, params['dim'], 2):
+                pe[0,i,p]=math.sin(p / (10000 ** ((2 * i)/hparams['dim'])))
+                pe[0,i+1,p]=math.cos(p / (10000 ** ((2 * i)/hparams['dim'])))
+        pe/=params['dim']**1/2
+    def forward(self,x):
+        shape=x.shape
+        x=self.pe[:,:,0:shape[2]]
+        return x
+class Learned_Encoding_Like(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        self.pe = Parameter(torch.zeros(1,hparams['dim'],hparams['batch_size']))
+    def forward(self,x):
+        shape=x.shape
+        x=self.pe[:,:,0:shape[2]]
+        return x
 class Conv1d(nn.Module):
     def __init__(self,hparams):
         super().__init__()
@@ -87,20 +109,23 @@ class Net(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
-
+        self.encoding_like=Learned_Encoding_Like(hparams)
         blocks=[FC_block(hparams) for i in range(hparams['blocks'])] #FC_block
         blocks.append(Conv1d(hparams))
         #print(blocks)
         self.blocks=nn.ModuleList(blocks)
     def forward(self,x):
+        #x+=self.encoding_like(x)
         for block in self.blocks:
             x=block(x)
+        #x-=self.encoding_like(x)
         return x
     def inverse(self,x):
+        #x+=self.encoding_like(x)
         state=[x,0] #current inverse, log determinant
         for block in reversed(self.blocks):
             inv=block.inverse(state[0])
             state[0]=inv[0]
             state[1]=state[1]+inv[1]
-        state[0]*10
+        #state[0]-=self.encoding_like(x)
         return state
