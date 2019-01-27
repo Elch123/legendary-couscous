@@ -19,13 +19,75 @@ class Pos_Encoding_Like(nn.Module):
         x=self.pe[:,:,0:shape[2]]
         return x
 class Learned_Encoding_Like(nn.Module):
-    def __init__(self,hparams):
+    def __init__(self,hparams,sign):
         super().__init__()
+        if(not (sign==1 or sign==-1)):
+            raise ValueError('invalid sign',str(sign))
+        self.sign=sign
         self.hparams=hparams
         self.pe = Parameter(torch.zeros(1,hparams['dim'],hparams['batch_size']))
     def forward(self,x):
         shape=x.shape
-        x=self.pe[:,:,0:shape[2]]
+        return x+self.pe[:,:,0:shape[2]]*self.sign#*self.sign
+    def inverse(self,x):
+        shape=x.shape
+        return (x-self.pe[:,:,0:shape[2]]*self.sign,0)
+class MultiHeadAttention(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        s=hparams['dim']//2
+        self.keyconv=torch.nn.Conv1d(s,s, 1)
+        self.queriesconv=torch.nn.Conv1d(s,s, 1)
+        self.softmax=torch.nn.Softmax(dim=-1)
+        self.projecta=torch.nn.Conv1d(s,s, 1)
+    def split(self,x,shape):
+        x=torch.reshape(x,(shape[0]*self.hparams['heads'],-1,shape[2]))
+        return x
+    def join(self,x,shape):
+        x=torch.reshape(x,(shape[0],-1,shape[2]))
+        return x
+    def forward(self,x):
+        shape=x.shape
+        keys=self.keyconv(x)
+        keys=self.split(keys,shape)
+        queries=self.queriesconv(x)
+        queries=self.split(queries,shape)
+        values=torch.matmul(keys.permute(0,2,1),queries)
+        seqlen=shape[2]
+        attn=self.softmax(values/(seqlen**1/2))
+        x=self.split(x,shape)
+        out=torch.matmul(x,attn)
+        out=self.join(out,shape)
+        out=self.projecta(out)
+        return out
+class Attn_conv(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        self.act=torch.nn.ReLU()
+        self.conva=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
+        self.convb=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
+    def forward(self,x):
+        add=x
+        x=self.conva(x)
+        x=self.act(x)
+        x=self.convb(x)
+        x=x+add
+        return x
+class Attn_block(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        self.act=torch.nn.ReLU()
+        self.attn=MultiHeadAttention(hparams)
+        self.conv=Attn_conv(hparams)
+    def forward(self,x):
+        add=x
+        x=self.attn(x)
+        x=x+add
+        x=self.conv(x)
+        x=x+add
         return x
 class Conv1d(nn.Module):
     def __init__(self,hparams):
@@ -44,25 +106,70 @@ class Conv1d(nn.Module):
         logdet=torch.slogdet(self.linweight)[1]#/self.hparams['dim']
         #print("Conv logdet " + str(logdet))
         return (invlin,logdet)
-    def cuda(self):
-        self.bias=self.bias.cuda
-        self.linweight=self.linweight.cuda()
-        print("hi")
-class Conv_block(nn.Module):
+class Res_Unit(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
         self.act=torch.nn.ReLU()
         self.conva=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,3,padding=1)
         self.convb=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,3,padding=1)
+    def forward(self,x):
+        add=x
+        x=self.act(x)
+        x=self.conva(x)
+        x=self.act(x)
+        x=self.convb(x)
+        x=x+add
+        return x
+class Head(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        self.conva=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,3,padding=1)
+    def forward(self,x):
+        x=self.conva(x)
+        return x
+class Tail(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        self.act=torch.nn.ReLU()
+        self.multiply_conv=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
+        self.add_conv=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
+        self.mscale=nn.Parameter(torch.zeros(size=(1,hparams['dim']//2,1)))
+        self.ascale=nn.Parameter(torch.zeros(size=(1,hparams['dim']//2,1)))
+    def forward(self,x):
+        x=self.act(x)
+        m=self.multiply_conv(x)*self.mscale
+        a=self.add_conv(x)#*self.ascale
+        return (m,a)
+class Transform_block(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.head=Head(hparams)
+        self.body=Attn_block(hparams)
+        self.tail=Tail(hparams)
+    def forward(self,x):
+        x=self.head(x)
+        x=self.body(x)
+        x=self.tail(x)
+        return x
+class Basic_conv_block(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        self.act=torch.nn.ReLU()
+        self.conva=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,3,padding=1)
+        self.resa=Res_Unit(hparams)
+        self.resb=Res_Unit(hparams)
         self.multiply_conv=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
         self.add_conv=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
         self.mscale=nn.Parameter(torch.zeros(size=(1,hparams['dim']//2,1)))
         self.ascale=nn.Parameter(torch.zeros(size=(1,hparams['dim']//2,1)))
     def forward(self,x):
         x=self.conva(x)
-        x=self.act(x)
-        x=self.convb(x)
+        x=self.resa(x)
+        x=self.resb(x)
         x=self.act(x)
         m=self.multiply_conv(x)*self.mscale
         a=self.add_conv(x)#*self.ascale
@@ -71,7 +178,7 @@ class Affine1d(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
-        self.block=Conv_block(hparams)
+        self.block=Transform_block(hparams)
     def forward(self,data):
         x=data[:,0:self.hparams['dim']//2,:]
         y=data[:,self.hparams['dim']//2:self.hparams['dim'],:]
@@ -92,6 +199,13 @@ class Identity(nn.Module):
         return x
     def inverse(self,x):
         return (x,torch.tensor(0))
+class Add_one(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+    def forward(self,x):
+        return x+1
+    def inverse(self,x):
+        return (x-1,torch.tensor(0))
 class FC_block(nn.Module):
     def __init__(self,hparams):
         super().__init__()
@@ -109,23 +223,22 @@ class Net(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
-        self.encoding_like=Learned_Encoding_Like(hparams)
-        blocks=[FC_block(hparams) for i in range(hparams['blocks'])] #FC_block
+        blocks=[]
+        blocks.append(Learned_Encoding_Like(hparams,1))
+        for i in range(hparams['blocks']):
+            blocks.append(FC_block(hparams))
         blocks.append(Conv1d(hparams))
+        blocks.append(Learned_Encoding_Like(hparams,-1))
         #print(blocks)
         self.blocks=nn.ModuleList(blocks)
     def forward(self,x):
-        #x+=self.encoding_like(x)
         for block in self.blocks:
             x=block(x)
-        #x-=self.encoding_like(x)
         return x
     def inverse(self,x):
-        #x+=self.encoding_like(x)
         state=[x,0] #current inverse, log determinant
         for block in reversed(self.blocks):
             inv=block.inverse(state[0])
             state[0]=inv[0]
             state[1]=state[1]+inv[1]
-        #state[0]-=self.encoding_like(x)
         return state

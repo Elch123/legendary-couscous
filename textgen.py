@@ -18,8 +18,8 @@ net=net.to(device)
 print(net)
 for p in net.parameters():
     print(p.shape)"""
-optimizer = torch.optim.SGD(net.parameters(), lr=hparams['lr'], momentum=0.9,nesterov=True)
-#optimizer = torch.optim.Adam(net.parameters(), lr=0.01, betas=(0.9, 0.98), eps=1e-9)
+#optimizer = torch.optim.SGD(net.parameters(), lr=hparams['lr'], momentum=0.9,nesterov=True)
+optimizer = torch.optim.Adam(net.parameters(), lr=0.001, betas=(0.9, 0.98), eps=1e-9)
 def make_normal_batch(batch_size,channels,seqlen):
     samples=channels*seqlen
     m = torch.distributions.MultivariateNormal(torch.zeros(samples), scale_tril=torch.eye(samples)) #zero mean, identity covariancm.samplee
@@ -40,7 +40,7 @@ def make_batch(batch_size):
     embedded=engbpe(torch.tensor(batch).long()).permute(0,2,1)
     noise=make_normal_batch_like(embedded)*.05
     embedded+=noise
-    print(embedded.shape)
+    print("batch shape " + str(embedded.shape))
     return embedded
 def decode_print(data):
     #data=data.permute(0,2,1)
@@ -49,12 +49,14 @@ def decode_print(data):
 def modelprint():
     b=make_batch(hparams['batch_size'])
     decode_print(b)
-    decode_print(net(make_normal_batch_like(b).to(device)).cpu())
+    with torch.no_grad():
+        decode_print(net(make_normal_batch_like(b).to(device)).cpu())
 def print_numpy(description,data):
     print(description+str(data.detach().cpu().numpy()))
 def verify():
     batch=make_batch(hparams['batch_size']).to(device)
     passed=net(net.inverse(batch)[0])
+    print("")
     passedtwo=net.inverse(net(batch))[0]
     print_numpy("Inverse first error ",torch.mean(batch-passed))
     print_numpy("Forward first error ",torch.mean(batch-passedtwo))
@@ -92,7 +94,7 @@ def train():
             verify()
             modelprint()
 
-
+#verify()
 train()
 
 
