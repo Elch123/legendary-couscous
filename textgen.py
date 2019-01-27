@@ -10,6 +10,7 @@ from makebatches import Batch_maker
 from blocks import Net
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 #device = "cpu"
+print(device)
 engbpe=BpEmbed(hparams,bpemb_en)
 maker=Batch_maker("traindeen.pickle")
 net=Net(hparams)

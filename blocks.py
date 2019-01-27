@@ -8,18 +8,25 @@ class Conv1d(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
-        self.linweight=Parameter(torch.empty(size=(hparams['dim'],hparams['dim'])))
-        torch.nn.init.orthogonal_(self.linweight) #orthogonal
-        #self.register_parameter("w",self.linweight)
-        self.bias=Parameter(torch.zeros(size=(1,hparams['dim'],1,)))
-        #self.register_parameter("b",self.bias)
+         #orthogonal
+        self.inv_conv=nn.Conv1d(hparams['dim'],hparams['dim'],1,bias=False)
+        self.forward_conv=nn.Conv1d(hparams['dim'],hparams['dim'],1,bias=False)
+        torch.nn.init.orthogonal_(self.inv_conv.weight.data)
+        self.bias=Parameter(torch.zeros(size=(1,hparams['dim'],1)))
+        self.dirty=True
     def forward(self,x):
-        return F.conv1d(x,torch.unsqueeze(self.linweight,-1))+self.bias
+        if(self.dirty):
+            self.dirty=False
+            inverse_kernel=torch.inverse(torch.squeeze(self.inv_conv.weight.data))
+            self.forward_conv.weight.data=torch.unsqueeze(inverse_kernel,-1)
+        x=self.forward_conv(x)
+        #x=x+self.bias
+        return  x
     def inverse(self,x):
-        x=x-self.bias
-        invlin=F.conv1d(x,torch.unsqueeze(torch.inverse(self.linweight),-1))
-        logdet=torch.slogdet(self.linweight)[1]#/self.hparams['dim']
-        #print("Conv logdet " + str(logdet))
+        #x=x-self.bias
+        self.dirty=True
+        invlin=self.inv_conv(x)
+        logdet=-torch.slogdet(torch.squeeze(self.inv_conv.weight.data))[1]#The log determinant of the inverse matrix is the negative of the forward one.
         return (invlin,logdet)
 class Pos_Encoding_Like(nn.Module):
     def __init__(self,hparams):
