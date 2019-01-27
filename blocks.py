@@ -4,6 +4,23 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 from hparams import hparams
 
+class Conv1d(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        self.linweight=Parameter(torch.empty(size=(hparams['dim'],hparams['dim'])))
+        torch.nn.init.orthogonal_(self.linweight) #orthogonal
+        #self.register_parameter("w",self.linweight)
+        self.bias=Parameter(torch.zeros(size=(1,hparams['dim'],1,)))
+        #self.register_parameter("b",self.bias)
+    def forward(self,x):
+        return F.conv1d(x,torch.unsqueeze(self.linweight,-1))+self.bias
+    def inverse(self,x):
+        x=x-self.bias
+        invlin=F.conv1d(x,torch.unsqueeze(torch.inverse(self.linweight),-1))
+        logdet=torch.slogdet(self.linweight)[1]#/self.hparams['dim']
+        #print("Conv logdet " + str(logdet))
+        return (invlin,logdet)
 class Pos_Encoding_Like(nn.Module):
     def __init__(self,hparams):
         super().__init__()
@@ -89,23 +106,7 @@ class Attn_block(nn.Module):
         x=self.conv(x)
         x=x+add
         return x
-class Conv1d(nn.Module):
-    def __init__(self,hparams):
-        super().__init__()
-        self.hparams=hparams
-        self.linweight=Parameter(torch.empty(size=(hparams['dim'],hparams['dim'])))
-        torch.nn.init.orthogonal_(self.linweight) #orthogonal
-        #self.register_parameter("w",self.linweight)
-        self.bias=Parameter(torch.zeros(size=(1,hparams['dim'],1,)))
-        #self.register_parameter("b",self.bias)
-    def forward(self,x):
-        return F.conv1d(x,torch.unsqueeze(self.linweight,-1))+self.bias
-    def inverse(self,x):
-        x=x-self.bias
-        invlin=F.conv1d(x,torch.unsqueeze(torch.inverse(self.linweight),-1))
-        logdet=torch.slogdet(self.linweight)[1]#/self.hparams['dim']
-        #print("Conv logdet " + str(logdet))
-        return (invlin,logdet)
+
 class Res_Unit(nn.Module):
     def __init__(self,hparams):
         super().__init__()
