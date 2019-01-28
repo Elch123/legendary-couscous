@@ -16,11 +16,9 @@ maker=Batch_maker("traindeen.pickle")
 net=Net(hparams)
 net=net.to(device)
 """
-print(net)
-for p in net.parameters():
-    print(p.shape)"""
+"""
 #optimizer = torch.optim.SGD(net.parameters(), lr=hparams['lr'], momentum=0.9,nesterov=True)
-optimizer = torch.optim.Adam(net.parameters(), lr=0.0001, betas=(0.9, 0.98), eps=1e-9)
+optimizer = torch.optim.Adam(net.parameters(), lr=0.0002, betas=(0.9, 0.98), eps=1e-9)
 def make_normal_batch(batch_size,channels,seqlen):
     samples=channels*seqlen
     m = torch.distributions.MultivariateNormal(torch.zeros(samples), scale_tril=torch.eye(samples)) #zero mean, identity covariancm.samplee
@@ -61,28 +59,17 @@ def verify():
     passedtwo=net.inverse(net(batch))[0]
     print_numpy("Inverse first error ",torch.mean(batch-passed))
     print_numpy("Forward first error ",torch.mean(batch-passedtwo))
-def flatten(x):
-    return x.reshape(x.shape[0],-1)
-#make_batch(1000)
+
 def train():
     for e in range(hparams['batches']):
-        #10*make_normal_batch(hparams['batch_size'])
         target=make_batch(hparams['batch_size'])
         target=target.to(device)
-        #target.requires_grad=True
-        #print(target)
         start=net.inverse(target)
-        #print(start[0])
         distloss=negative_log_gaussian_density(start[0].permute(0,2,1))/hparams['dim']
-        #print(distloss)
-        #print(distloss.shape)
         jacloss=start[1]/hparams['dim']
-        #print(jacloss)
-        #print(jacloss.shape)
         loss=distloss+jacloss
         loss=torch.mean(loss)
         net.zero_grad()
-        #print(loss)
         if not torch.isnan(loss):
             loss.backward()
             torch.nn.utils.clip_grad_norm_(net.parameters(), 10)

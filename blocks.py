@@ -260,11 +260,12 @@ class Net(nn.Module):
         super().__init__()
         self.hparams=hparams
         blocks=[]
-        blocks.append(Learned_Encoding_Like(hparams,1))
+        #l=Learned_Encoding_Like(hparams,1)
+        #blocks.append(l)
         for i in range(hparams['blocks']):
             blocks.append(FC_block(hparams))
         blocks.append(Conv1d(hparams))
-        blocks.append(Learned_Encoding_Like(hparams,-1))
+        #blocks.append(l)
         #print(blocks)
         self.blocks=nn.ModuleList(blocks)
     def forward(self,x):
