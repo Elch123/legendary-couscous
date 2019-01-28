@@ -3,16 +3,36 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 from hparams import hparams
+import math
 
 class Conv1d(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        self.linweight=Parameter(torch.empty(size=(hparams['dim'],hparams['dim'],1)))
+        torch.nn.init.orthogonal_(self.linweight) #orthogonal
+        #self.register_parameter("w",self.linweight)
+        self.bias=Parameter(torch.zeros(size=(1,hparams['dim'],1,)))
+        #self.register_parameter("b",self.bias)
+    def forward(self,x):
+        return F.conv1d(x,torch.unsqueeze(torch.inverse(torch.squeeze(self.linweight)),-1))+self.bias
+    def inverse(self,x):
+        x=x-self.bias
+        invlin=F.conv1d(x,self.linweight)
+        logdet=-torch.slogdet(torch.squeeze(self.linweight))[1]#/self.hparams['dim']
+        #print("Conv logdet " + str(logdet))
+        return (invlin,logdet)
+class Conv1d_broken(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
          #orthogonal
         self.inv_conv=nn.Conv1d(hparams['dim'],hparams['dim'],1,bias=False)
         self.forward_conv=nn.Conv1d(hparams['dim'],hparams['dim'],1,bias=False)
-        torch.nn.init.orthogonal_(self.inv_conv.weight.data)
-        self.bias=Parameter(torch.zeros(size=(1,hparams['dim'],1)))
+        linweight=torch.empty(size=(hparams['dim'],hparams['dim']))
+        torch.nn.init.orthogonal_(linweight)
+        self.inv_conv.weight.data=torch.unsqueeze(linweight,-1)
+        self.bias=Parameter(torch.zeros(size=(1,hparams['dim'],1,)))
         self.dirty=True
     def forward(self,x):
         if(self.dirty):
@@ -20,27 +40,30 @@ class Conv1d(nn.Module):
             inverse_kernel=torch.inverse(torch.squeeze(self.inv_conv.weight.data))
             self.forward_conv.weight.data=torch.unsqueeze(inverse_kernel,-1)
         x=self.forward_conv(x)
-        #x=x+self.bias
+        x=x+self.bias
         return  x
     def inverse(self,x):
-        #x=x-self.bias
+        x=x-self.bias
         self.dirty=True
         invlin=self.inv_conv(x)
         logdet=-torch.slogdet(torch.squeeze(self.inv_conv.weight.data))[1]#The log determinant of the inverse matrix is the negative of the forward one.
+        #logdet=0
         return (invlin,logdet)
 class Pos_Encoding_Like(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
-        pe = Parameter(torch.zeros(1,hparams['dim'],hparams['batch_size']),requires_grad=False)
+        d=hparams['dim']//2+1
+        pe = torch.zeros(1,d,hparams['batch_size'])
         for p in range(hparams['batch_size']):
-            for i in range(0, params['dim'], 2):
-                pe[0,i,p]=math.sin(p / (10000 ** ((2 * i)/hparams['dim'])))
-                pe[0,i+1,p]=math.cos(p / (10000 ** ((2 * i)/hparams['dim'])))
-        pe/=params['dim']**1/2
+            for i in range(0, d, 2):
+                pe[0,i,p]=math.sin(p / (10000 ** ((2 * i)/d)))
+                pe[0,i+1,p]=math.cos(p / (10000 ** ((2 * i)/d)))
+        self.pe=Parameter(pe/(d**1/2*2),requires_grad=False)
+        self.scale=Parameter(torch.ones(size=(1,hparams['dim']//2,1)))
     def forward(self,x):
         shape=x.shape
-        x=self.pe[:,:,0:shape[2]]
+        x=self.pe[:,0:self.hparams['dim']//2,0:shape[2]]*self.scale
         return x
 class Learned_Encoding_Like(nn.Module):
     def __init__(self,hparams,sign):
@@ -93,11 +116,9 @@ class Attn_conv(nn.Module):
         self.conva=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
         self.convb=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
     def forward(self,x):
-        add=x
         x=self.conva(x)
         x=self.act(x)
         x=self.convb(x)
-        x=x+add
         return x
 class Attn_block(nn.Module):
     def __init__(self,hparams):
@@ -110,6 +131,7 @@ class Attn_block(nn.Module):
         add=x
         x=self.attn(x)
         x=x+add
+        add=x
         x=self.conv(x)
         x=x+add
         return x
@@ -133,7 +155,7 @@ class Head(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
-        self.conva=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,3,padding=1)
+        self.conva=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
     def forward(self,x):
         x=self.conva(x)
         return x
@@ -148,18 +170,22 @@ class Tail(nn.Module):
         self.ascale=nn.Parameter(torch.zeros(size=(1,hparams['dim']//2,1)))
     def forward(self,x):
         x=self.act(x)
-        m=self.multiply_conv(x)*self.mscale
+        m=torch.tanh(self.multiply_conv(x))*self.mscale
         a=self.add_conv(x)#*self.ascale
         return (m,a)
 class Transform_block(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.head=Head(hparams)
-        self.body=Attn_block(hparams)
+        self.bodya=Attn_block(hparams)
+        self.bodyb=Attn_block(hparams)
         self.tail=Tail(hparams)
+        self.encoding=Pos_Encoding_Like(hparams)
     def forward(self,x):
         x=self.head(x)
-        x=self.body(x)
+        x=x+self.encoding(x)
+        x=self.bodya(x)
+        x=self.bodyb(x)
         x=self.tail(x)
         return x
 class Basic_conv_block(nn.Module):
@@ -232,11 +258,11 @@ class Net(nn.Module):
         super().__init__()
         self.hparams=hparams
         blocks=[]
-        blocks.append(Learned_Encoding_Like(hparams,1))
+        #blocks.append(Learned_Encoding_Like(hparams,1))
         for i in range(hparams['blocks']):
             blocks.append(FC_block(hparams))
         blocks.append(Conv1d(hparams))
-        blocks.append(Learned_Encoding_Like(hparams,-1))
+        #blocks.append(Learned_Encoding_Like(hparams,-1))
         #print(blocks)
         self.blocks=nn.ModuleList(blocks)
     def forward(self,x):

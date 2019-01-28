@@ -20,7 +20,7 @@ print(net)
 for p in net.parameters():
     print(p.shape)"""
 #optimizer = torch.optim.SGD(net.parameters(), lr=hparams['lr'], momentum=0.9,nesterov=True)
-optimizer = torch.optim.Adam(net.parameters(), lr=0.001, betas=(0.9, 0.98), eps=1e-9)
+optimizer = torch.optim.Adam(net.parameters(), lr=0.0001, betas=(0.9, 0.98), eps=1e-9)
 def make_normal_batch(batch_size,channels,seqlen):
     samples=channels*seqlen
     m = torch.distributions.MultivariateNormal(torch.zeros(samples), scale_tril=torch.eye(samples)) #zero mean, identity covariancm.samplee
@@ -39,7 +39,7 @@ def negative_log_gaussian_density(data):
 def make_batch(batch_size):
     batch=maker.make_batch(batch_size)[0] #English, not German
     embedded=engbpe(torch.tensor(batch).long()).permute(0,2,1)
-    noise=make_normal_batch_like(embedded)*.05
+    noise=make_normal_batch_like(embedded)*hparams['noise_scale']
     embedded+=noise
     print("batch shape " + str(embedded.shape))
     return embedded
@@ -91,7 +91,7 @@ def train():
             print_numpy("Log likelihood loss " ,torch.mean(distloss))
             print_numpy("Log determinant jacobian  " ,torch.mean(jacloss))
             print_numpy("Total loss ",loss)
-        if(e%10==0):
+        if(e%20==0):
             verify()
             modelprint()
 
