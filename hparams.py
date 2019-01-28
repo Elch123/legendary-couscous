@@ -2,7 +2,7 @@ hparams={
 'lr':.002,
 'batches':5000001,
 'batch_size':500,
-'blocks':40,
+'blocks':30,
 'dim':50,
 'affine_dim':50,
 'embed_symbols':10000,

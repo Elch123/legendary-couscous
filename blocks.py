@@ -49,21 +49,23 @@ class Conv1d_broken(nn.Module):
         logdet=-torch.slogdet(torch.squeeze(self.inv_conv.weight.data))[1]#The log determinant of the inverse matrix is the negative of the forward one.
         #logdet=0
         return (invlin,logdet)
-class Pos_Encoding_Like(nn.Module):
-    def __init__(self,hparams):
+class Pos_Encoding_Like(nn.Module): #slow,perhaps optimize, but only needs one run
+    def __init__(self,hparams,embedding_channels):
         super().__init__()
         self.hparams=hparams
-        d=hparams['dim']//2+1
+        d=embedding_channels
+        if(d%2==1):
+            d=d+1
         pe = torch.zeros(1,d,hparams['batch_size'])
         for p in range(hparams['batch_size']):
             for i in range(0, d, 2):
                 pe[0,i,p]=math.sin(p / (10000 ** ((2 * i)/d)))
                 pe[0,i+1,p]=math.cos(p / (10000 ** ((2 * i)/d)))
         self.pe=Parameter(pe/(d**1/2*2),requires_grad=False)
-        self.scale=Parameter(torch.ones(size=(1,hparams['dim']//2,1)))
+        self.scale=Parameter(torch.ones(size=(1,d,1)))
     def forward(self,x):
         shape=x.shape
-        x=self.pe[:,0:self.hparams['dim']//2,0:shape[2]]*self.scale
+        x=self.pe[:,0:shape[1],0:shape[2]]*self.scale
         return x
 class Learned_Encoding_Like(nn.Module):
     def __init__(self,hparams,sign):
@@ -180,7 +182,7 @@ class Transform_block(nn.Module):
         self.bodya=Attn_block(hparams)
         self.bodyb=Attn_block(hparams)
         self.tail=Tail(hparams)
-        self.encoding=Pos_Encoding_Like(hparams)
+        self.encoding=Pos_Encoding_Like(hparams,hparams['affine_dim'])
     def forward(self,x):
         x=self.head(x)
         x=x+self.encoding(x)
@@ -258,11 +260,11 @@ class Net(nn.Module):
         super().__init__()
         self.hparams=hparams
         blocks=[]
-        #blocks.append(Learned_Encoding_Like(hparams,1))
+        blocks.append(Learned_Encoding_Like(hparams,1))
         for i in range(hparams['blocks']):
             blocks.append(FC_block(hparams))
         blocks.append(Conv1d(hparams))
-        #blocks.append(Learned_Encoding_Like(hparams,-1))
+        blocks.append(Learned_Encoding_Like(hparams,-1))
         #print(blocks)
         self.blocks=nn.ModuleList(blocks)
     def forward(self,x):
