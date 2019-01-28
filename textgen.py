@@ -16,6 +16,18 @@ maker=Batch_maker("traindeen.pickle")
 net=Net(hparams)
 net=net.to(device)
 """
+Updating the net for translation
+Modified function checklist:
+make_batch
+modelprint
+verify
+train
+net(x)
+code change checklist:
+create an encoder
+figure out how to wire the parts together
+translate!
+Use the encoder for positional encoding,not the affine blocks
 """
 #optimizer = torch.optim.SGD(net.parameters(), lr=hparams['lr'], momentum=0.9,nesterov=True)
 optimizer = torch.optim.Adam(net.parameters(), lr=0.0002, betas=(0.9, 0.98), eps=1e-9)

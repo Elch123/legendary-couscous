@@ -3,9 +3,9 @@ hparams={
 'batches':5000001,
 'batch_size':500,
 'blocks':40,
-'dim':50,
-'affine_dim':50,
+'dim':100,
+'affine_dim':100,
 'embed_symbols':10000,
 'heads':5,
-'noise_scale':.20,
+'noise_scale':.10,
 }
