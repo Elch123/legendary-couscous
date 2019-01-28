@@ -83,7 +83,7 @@ class MultiHeadAttention(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
-        s=hparams['dim']//2
+        s=hparams['affine_dim']
         self.keyconv=torch.nn.Conv1d(s,s, 1)
         self.queriesconv=torch.nn.Conv1d(s,s, 1)
         self.softmax=torch.nn.Softmax(dim=-1)
@@ -113,8 +113,8 @@ class Attn_conv(nn.Module):
         super().__init__()
         self.hparams=hparams
         self.act=torch.nn.ReLU()
-        self.conva=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
-        self.convb=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
+        self.conva=torch.nn.Conv1d(hparams['affine_dim'],hparams['affine_dim'],1)
+        self.convb=torch.nn.Conv1d(hparams['affine_dim'],hparams['affine_dim'],1)
     def forward(self,x):
         x=self.conva(x)
         x=self.act(x)
@@ -155,7 +155,7 @@ class Head(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
-        self.conva=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
+        self.conva=torch.nn.Conv1d(hparams['dim']//2,hparams['affine_dim'],1)
     def forward(self,x):
         x=self.conva(x)
         return x
@@ -164,8 +164,8 @@ class Tail(nn.Module):
         super().__init__()
         self.hparams=hparams
         self.act=torch.nn.ReLU()
-        self.multiply_conv=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
-        self.add_conv=torch.nn.Conv1d(hparams['dim']//2,hparams['dim']//2,1)
+        self.multiply_conv=torch.nn.Conv1d(hparams['affine_dim'],hparams['dim']//2,1)
+        self.add_conv=torch.nn.Conv1d(hparams['affine_dim'],hparams['dim']//2,1)
         self.mscale=nn.Parameter(torch.zeros(size=(1,hparams['dim']//2,1)))
         self.ascale=nn.Parameter(torch.zeros(size=(1,hparams['dim']//2,1)))
     def forward(self,x):
