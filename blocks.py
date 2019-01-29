@@ -68,19 +68,16 @@ class Pos_Encoding_Like(nn.Module): #slow,perhaps optimize, but only needs one r
         x=self.pe[:,0:shape[1],0:shape[2]]*self.scale
         return x
 class Learned_Encoding_Like(nn.Module):
-    def __init__(self,hparams,sign):
+    def __init__(self,hparams):
         super().__init__()
-        if(not (sign==1 or sign==-1)):
-            raise ValueError('invalid sign',str(sign))
-        self.sign=sign
         self.hparams=hparams
-        self.pe = Parameter(torch.zeros(1,hparams['dim'],hparams['batch_size']))
+        self.pe = Parameter(torch.zeros(1,hparams['affine_dim'],hparams['batch_size']))
     def forward(self,x):
         shape=x.shape
-        return x+self.pe[:,:,0:shape[2]]*self.sign#*self.sign
+        return x+self.pe[:,:,0:shape[2]]
     def inverse(self,x):
         shape=x.shape
-        return (x-self.pe[:,:,0:shape[2]]*self.sign,0)
+        return (x-self.pe[:,:,0:shape[2]],0)
 class MultiHeadAttention(nn.Module):
     def __init__(self,hparams):
         super().__init__()
@@ -158,8 +155,14 @@ class Head(nn.Module):
         super().__init__()
         self.hparams=hparams
         self.conva=torch.nn.Conv1d(hparams['dim']//2,hparams['affine_dim'],1)
+        self.convb=torch.nn.Conv1d(hparams['affine_dim'],hparams['affine_dim'],1)
+        self.encoding=Learned_Encoding_Like(hparams)
+        self.act=torch.nn.ReLU()
     def forward(self,x):
         x=self.conva(x)
+        x=self.act(x)
+        x=self.convb(x)
+        x=x+self.encoding(x)
         return x
 class Tail(nn.Module):
     def __init__(self,hparams):
@@ -181,11 +184,10 @@ class Transform_block(nn.Module):
         self.head=Head(hparams)
         self.bodya=Attn_block(hparams)
         self.bodyb=Attn_block(hparams)
+        #self.bodyc=Attn_block(hparams)
         self.tail=Tail(hparams)
-        self.encoding=Pos_Encoding_Like(hparams,hparams['affine_dim'])
     def forward(self,x):
         x=self.head(x)
-        x=x+self.encoding(x)
         x=self.bodya(x)
         x=self.bodyb(x)
         x=self.tail(x)
