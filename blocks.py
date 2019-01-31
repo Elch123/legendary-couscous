@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 from hparams import hparams
+import tracemalloc
 import math
 
 class Conv1d(nn.Module):
@@ -158,8 +159,9 @@ class Head(nn.Module):
         self.convb=torch.nn.Conv1d(hparams['affine_dim'],hparams['affine_dim'],1)
         self.encoding=Learned_Encoding_Like(hparams)
         self.act=torch.nn.ReLU()
-    def forward(self,x):
+    def forward(self,x,enc):
         x=self.conva(x)
+        x=x+enc
         x=self.act(x)
         x=self.convb(x)
         x=x+self.encoding(x)
@@ -186,8 +188,8 @@ class Transform_block(nn.Module):
         self.bodyb=Attn_block(hparams)
         #self.bodyc=Attn_block(hparams)
         self.tail=Tail(hparams)
-    def forward(self,x):
-        x=self.head(x)
+    def forward(self,x,enc):
+        x=self.head(x,enc)
         x=self.bodya(x)
         x=self.bodyb(x)
         x=self.tail(x)
@@ -217,15 +219,15 @@ class Affine1d(nn.Module):
         super().__init__()
         self.hparams=hparams
         self.block=Transform_block(hparams)
-    def forward(self,data):
+    def forward(self,data,enc):
         x=data[:,0:self.hparams['dim']//2,:]
         y=data[:,self.hparams['dim']//2:self.hparams['dim'],:]
-        (m,a)=self.block(x)
+        (m,a)=self.block(x,enc)
         out=torch.cat((x,y*torch.exp(m)+a),dim=1)
         return out
-    def inverse(self,data):
+    def inverse(self,data,enc):
         x=data[:,0:self.hparams['dim']//2,:]
-        (m,a)=self.block(x)
+        (m,a)=self.block(x,enc)
         y=data[:,self.hparams['dim']//2:self.hparams['dim'],:]
         data=torch.cat((x,(y-a)/torch.exp(m)),dim=1)
         logdet=torch.sum(m,dim=1)
@@ -250,34 +252,59 @@ class FC_block(nn.Module):
         self.hparams=hparams
         self.lin=Conv1d(hparams)#Conv1d(hparams)
         self.act=Affine1d(hparams)#Parametric_Affine
-    def forward(self,x):
-        return self.act(self.lin(x))
-    def inverse(self,x):
-        postconv=self.act.inverse(x)
+    def forward(self,x,enc):
+        return self.act(self.lin(x),enc)
+
+    def inverse(self,x,encd):
+        postconv=self.act.inverse(x,encd)
         start=self.lin.inverse(postconv[0])
         logdet=postconv[1]+start[1]
         return (start[0],logdet)
+    def nothing(self):
+        return
+class Encoder(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        encoder=[]
+        encoder.append(torch.nn.Conv1d(hparams['dim'],hparams['affine_dim'],1))
+        encoder.append(Learned_Encoding_Like(hparams))
+        for i in range(hparams['enc_blocks']):
+            encoder.append(Attn_block(hparams))
+        encoder.append(torch.nn.ReLU())
+        encoder.append(torch.nn.Conv1d(hparams['affine_dim'],hparams['affine_dim'],1))
+        self.encoder=nn.ModuleList(encoder)
+    def forward(self,x):
+        for block in self.encoder:
+            x=block(x)
+        return x
 class Net(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
         blocks=[]
-        #l=Learned_Encoding_Like(hparams,1)
-        #blocks.append(l)
         for i in range(hparams['blocks']):
             blocks.append(FC_block(hparams))
         blocks.append(Conv1d(hparams))
-        #blocks.append(l)
-        #print(blocks)
         self.blocks=nn.ModuleList(blocks)
-    def forward(self,x):
+        self.encoder=Encoder(hparams)
+    def forward(self,x,cond):
+        enc=self.encoder(cond)
         for block in self.blocks:
-            x=block(x)
+            if(type(block)==FC_block):
+                x=block(x,enc)
+            else:
+                x=block(x)
         return x
-    def inverse(self,x):
+    def inverse(self,x,cond):
+        enc=self.encoder(cond)
         state=[x,0] #current inverse, log determinant
         for block in reversed(self.blocks):
-            inv=block.inverse(state[0])
+            inv=0
+            if(type(block)==FC_block): #Only feed conditioning to the affine layers, not the conv1d or any other layer types
+                inv=block.inverse(state[0],enc)
+            else:
+                inv=block.inverse(state[0])
             state[0]=inv[0]
             state[1]=state[1]+inv[1]
         return state
