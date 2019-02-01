@@ -86,7 +86,7 @@ def prof_forward():
         print(prof)
 def train():
     for e in range(hparams['batches']):
-        if(e%30==0):
+        if(e%40==0):
             #prof_forward()
             #verify()
             modelprint()

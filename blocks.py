@@ -186,14 +186,18 @@ class Head(nn.Module):
         self.hparams=hparams
         self.conva=torch.nn.Conv1d(hparams['dim']//2,hparams['affine_dim'],1)
         self.convb=torch.nn.Conv1d(hparams['affine_dim'],hparams['affine_dim'],1)
+        self.gate=torch.nn.Conv1d(hparams['affine_dim'],hparams['affine_dim'],1)
         self.encoding=Learned_Encoding_Like(hparams)
+        self.attn=Multi_head_attention(hparams)
         self.act=torch.nn.ReLU()
     def forward(self,x,enc):
         x=self.conva(x)
-        x=x+enc
+        x=x+self.encoding(x)
         x=self.act(x)
         x=self.convb(x)
-        x=x+self.encoding(x)
+        q=self.attn(enc,x)
+        g=torch.tanh(self.gate(q+x))
+        x=g*q+x
         return x
 class Tail(nn.Module):
     def __init__(self,hparams):
