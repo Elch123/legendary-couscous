@@ -24,6 +24,7 @@ class Batch_maker():
         numback=numback+min(0,topi-numback)#clip number of elements going back if it is less than zero, to not overrun start of array. Watch that zero
         fronti=topi-numback
         batch=np.zeros(shape=(2,numback,strlen),dtype=np.int32)
+        #print(batch.nbytes)
         for i in range(numback):
             seta=self.text[0][fronti+i]
             maxtopa=min(len(seta),strlen)

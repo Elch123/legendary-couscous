@@ -25,12 +25,12 @@ figure out how to wire the parts together
 translate!
 """
 #optimizer = torch.optim.SGD(net.parameters(), lr=hparams['lr'], momentum=0.9,nesterov=True)
-optimizer = torch.optim.Adam(net.parameters(), lr=0.0002, betas=(0.9, 0.98), eps=1e-9)
+optimizer = torch.optim.Adam(net.parameters(), lr=0.0001, betas=(0.9, 0.98), eps=1e-9)
 def make_normal_batch(batch_size,channels,seqlen):
-    samples=channels*seqlen
+    samples=seqlen
     m = torch.distributions.MultivariateNormal(torch.zeros(samples), scale_tril=torch.eye(samples)) #zero mean, identity covariancm.samplee
-    data=m.sample((batch_size,))
-    data=data.reshape(batch_size,channels,seqlen)
+    data=m.sample((batch_size,channels))
+    #data=data.reshape(batch_size,channels,seqlen)
     return data
 def make_normal_batch_like(b):
     return make_normal_batch(b.shape[0],b.shape[1],b.shape[2])
@@ -55,10 +55,7 @@ def decode_print(data):
     text=engbpe.disembed_batch(data.cpu())
     print(text)
 def modelprint():
-    for k in range(10):
-        b=make_batch(hparams['batch_size'])
-        time.sleep(1)
-    return
+    b=make_batch(hparams['batch_size'])
     decode_print(b[0])
     with torch.no_grad():
         decode_print(net(make_normal_batch_like(b[0]).to(device),b[1]))
@@ -89,7 +86,7 @@ def prof_forward():
         print(prof)
 def train():
     for e in range(hparams['batches']):
-        if(e%20==0):
+        if(e%30==0):
             #prof_forward()
             #verify()
             modelprint()
@@ -110,8 +107,8 @@ def train():
             print_numpy("Log determinant jacobian  " ,torch.mean(jacloss))
             print_numpy("Total loss ",loss)
 #verify()
-#train()
-modelprint()
+train()
+#modelprint()
 
 torch.cuda.synchronize()
 del net

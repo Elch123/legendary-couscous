@@ -79,7 +79,7 @@ class Learned_Encoding_Like(nn.Module):
     def inverse(self,x):
         shape=x.shape
         return (x-self.pe[:,:,0:shape[2]],0)
-class MultiHeadAttention(nn.Module):
+class Multi_head_self_attention(nn.Module):
     def __init__(self,hparams):
         super().__init__()
         self.hparams=hparams
@@ -108,6 +108,35 @@ class MultiHeadAttention(nn.Module):
         out=self.join(out,shape)
         out=self.projecta(out)
         return out
+class Multi_head_attention(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        s=hparams['affine_dim']
+        self.keyconv=torch.nn.Conv1d(s,s, 1)
+        self.queriesconv=torch.nn.Conv1d(s,s, 1)
+        self.softmax=torch.nn.Softmax(dim=-1)
+        self.projecta=torch.nn.Conv1d(s,s, 1)
+    def split(self,x,shape):
+        x=torch.reshape(x,(shape[0]*self.hparams['heads'],-1,shape[2]))
+        return x
+    def join(self,x,shape):
+        x=torch.reshape(x,(shape[0],-1,shape[2]))
+        return x
+    def forward(self,x,y): #X will be sequence with attention over it, y will be the querying sequence
+        shape=x.shape
+        keys=self.keyconv(x)
+        keys=self.split(keys,shape)
+        queries=self.queriesconv(y)
+        queries=self.split(queries,shape)
+        values=torch.matmul(keys.permute(0,2,1),queries)
+        seqlen=shape[2]
+        attn=self.softmax(values/(seqlen**1/2))
+        x=self.split(x,shape)
+        out=torch.matmul(x,attn)
+        out=self.join(out,shape)
+        out=self.projecta(out)
+        return out
 class Attn_conv(nn.Module):
     def __init__(self,hparams):
         super().__init__()
@@ -125,7 +154,7 @@ class Attn_block(nn.Module):
         super().__init__()
         self.hparams=hparams
         self.act=torch.nn.ReLU()
-        self.attn=MultiHeadAttention(hparams)
+        self.attn=Multi_head_self_attention(hparams)
         self.conv=Attn_conv(hparams)
     def forward(self,x):
         add=x
