@@ -88,7 +88,7 @@ def train():
     for e in range(hparams['batches']):
         if(e%40==0):
             #prof_forward()
-            #verify()
+            verify()
             modelprint()
         target=make_batch(hparams['batch_size'])
         start=net.inverse(target[0],target[1])

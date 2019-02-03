@@ -8,5 +8,5 @@ hparams={
 'affine_dim':200,
 'embed_symbols':10000,
 'heads':5,
-'noise_scale':.20,
+'noise_scale':.01,
 }
