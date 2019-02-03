@@ -9,4 +9,5 @@ hparams={
 'embed_symbols':10000,
 'heads':5,
 'noise_scale':.01,
+'blur_kernel':[.05,.1,.7,.1,.05],
 }

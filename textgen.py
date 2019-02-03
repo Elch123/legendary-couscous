@@ -30,7 +30,7 @@ def make_normal_batch(batch_size,channels,seqlen):
     samples=seqlen
     m = torch.distributions.MultivariateNormal(torch.zeros(samples), scale_tril=torch.eye(samples)) #zero mean, identity covariancm.samplee
     data=m.sample((batch_size,channels))
-    #data=data.reshape(batch_size,channels,seqlen)
+    #data.requires_grad=False
     return data
 def make_normal_batch_like(b):
     return make_normal_batch(b.shape[0],b.shape[1],b.shape[2])
@@ -41,12 +41,24 @@ def negative_log_gaussian_density(data):
     m = torch.distributions.MultivariateNormal(torch.zeros(size).to(device), scale_tril=torch.eye(size).to(device))
     nll=-m.log_prob(data)
     return nll
+def blur_batch(batch):
+    s=batch.shape
+    blur=hparams['blur_kernel']
+    blurred=0
+    for i in range(len(blur)):
+        blurred+=F.pad(batch,(i,len(blur)-i-1))*blur[i]
+    padded=len(blur)//2
+    blurred=blurred[:,:,padded:-padded]
+    #print(s)
+    #print(blurred.shape)
+    return blurred
 def make_batch(batch_size):
     batch=maker.make_batch(batch_size) #English=0 not German=1
     target=engbpe(torch.tensor(batch[0]).long()).permute(0,2,1)
     source=debpe(torch.tensor(batch[1]).long()).permute(0,2,1)
     noise=make_normal_batch_like(target)*hparams['noise_scale']
     target+=noise
+    target=blur_batch(target)
     #embedded_batch=torch.stack((target,source),dim=0)
     print("batch shape " + str(target.shape))
     return (target.to(device),source.to(device))
