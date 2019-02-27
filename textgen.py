@@ -43,23 +43,25 @@ def negative_log_gaussian_density(data):
     return nll
 def blur_batch(batch):
     s=batch.shape
-    blur=hparams['blur_kernel']
-    blurred=0
-    for i in range(len(blur)):
-        blurred+=F.pad(batch,(i,len(blur)-i-1))*blur[i]
-    padded=len(blur)//2
-    blurred=blurred[:,:,padded:-padded]
-    #print(s)
-    #print(blurred.shape)
-    return blurred
+    #blur_kernel=torch.eye(s[2])*.8+torch.ones(size=(s[2],s[2]))/s[2]*.2 #Add 4/5 of the original value, and 1/5 an average of the sentences embeddings
+    iden=torch.eye(s[2])
+    neighboring=torch.zeros(size=(s[2],s[2]))
+    for i in range(s[2]):
+        for j in range(s[2]):
+            neighboring[i][j]=s[2]-torch.abs(torch.tensor(i-j))
+    neighboring=neighboring/torch.sum(neighboring,dim=1)
+    blur_kernel=.7*iden+.3*neighboring #70% that same location,30% a mixture of other positions in order to add noise and make a dependence on the sentence, not
+    #just the individual words, as there is a finite word vocabulary that can crash training if not made real valued.
+    batch=torch.matmul(batch,blur_kernel)
+    return batch
 def make_batch(batch_size):
     batch=maker.make_batch(batch_size) #English=0 not German=1
-    target=engbpe(torch.tensor(batch[0]).long()).permute(0,2,1)
+    target=engbpe(torch.tensor(batch[0]).long())
+    #target=blur_batch(target)
+    target=target.permute(0,2,1)
     source=debpe(torch.tensor(batch[1]).long()).permute(0,2,1)
     noise=make_normal_batch_like(target)*hparams['noise_scale']
     target+=noise
-    target=blur_batch(target)
-    #embedded_batch=torch.stack((target,source),dim=0)
     print("batch shape " + str(target.shape))
     return (target.to(device),source.to(device))
 def decode_print(data):
