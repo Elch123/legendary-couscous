@@ -244,19 +244,40 @@ def mismatch(outa,outb):
     if(ga != gb):
         return True
     return False
-def find_root(fn,start,direction,start_scale=torch.tensor(1e-6)):
+def find_root(fn,start,direction,start_scale=1e-6):
     #in_array=np.zeros(shape=(num_points,2))
+    start_scale=torch.tensor(start_scale)
+    #print("start scale" + str(start_scale))
     with torch.no_grad():
-        out=fn(start).detach().numpy()
+        out=fn(torch.unsqueeze(start,dim=0)).detach().numpy()[0]
         initial_out=out
-        while(start_scale<1e4):
+        print(initial_out)
+        while(True):
             candidate_point=start+direction*start_scale
-            out=fn(candidate_point).detach().numpy()
-            if(mismatch(initial_out,out)):
+            out=fn(torch.unsqueeze(candidate_point,dim=0)).detach().numpy()[0]
+            #print("current out is " + str(out))
+            #print("scale is " + str(start_scale))
+            if(mismatch(initial_out,out) or start_scale>1e1):
+                #print("scale is " + str(start_scale))
                 return start_scale,candidate_point
             start_scale*=2
-def distance(vector):
-    return torch.sum(vector**2)**(1/2)
+def find_root_batch(fn,start,direction,start_scale=1e-6):
+    #in_array=np.zeros(shape=(num_points,2))
+    start_scale=torch.tensor(start_scale)
+    #print("start scale" + str(start_scale))
+    with torch.no_grad():
+        out=fn(torch.unsqueeze(start,dim=0)).detach().numpy()[0]
+        initial_out=out
+        print(initial_out)
+        while(True):
+            candidate_point=start+direction*start_scale
+            out=fn(torch.unsqueeze(candidate_point,dim=0)).detach().numpy()[0]
+            #print("current out is " + str(out))
+            #print("scale is " + str(start_scale))
+            if(mismatch(initial_out,out) or start_scale>1e1):
+                #print("scale is " + str(start_scale))
+                return start_scale,candidate_point
+            start_scale*=2
 def neg_log_density(point):
     dimentions=len(point)
     log_gaussian_density=-torch.reduce_sum(point**2)-1/2*torch.log(torch.tensor(2*3.14159))
@@ -264,89 +285,134 @@ def neg_log_density(point):
     density=-log_gaussian_density
     return density
 def neg_log_p(point,dist):
-    dimentions=len(point)
-    log_gaussian_density=-torch.sum(point**2)-1/2*torch.log(torch.tensor(2*3.14159))
+    dimentions=point.shape[0]
+    log_gaussian_density=-torch.sum(point**2,dim=0)/2-1/2*torch.log(torch.tensor(2*3.14159))
     volume=(dimentions-1)*torch.log(dist)
     density=log_gaussian_density+volume
     return density
-def basic_integrate(point,direction,dist,samples=1000):
-    logarithms=[]
-    dimentions=len(point)
-    for i in range(samples):
-        cur_d=dist/samples
-        logarithms.append(neg_log_p(point+direction*cur_d,cur_d)-torch.log(samples)) #-torch.log(samples) to divide by the number of samples
-    logarithm=logsumexp(logarithms)
-    return logarithm
-def argmax_logs(logs):
-    l=0
-    argmax=logs[0][2]
-    for i in range(len(logs)):
-        if(logs[i][2]>argmax):
-            argmax=logs[i][2]
-            l=i
-    print(l)
-    return l
+def neg_log_p_batch(point,dist):
+    dimentions=point.shape[-1]
+    log_gaussian_density=-torch.sum(point**2,dim=-1)/2-1/2*torch.log(torch.tensor(2*3.14159))
+    volume=(dimentions-1)*torch.log(dist)
+    density=log_gaussian_density+volume
+    return density
 def logsumexp(tensor): #implements logsumexp trick for numerically stable adding of logarithms
     maximum=torch.max(tensor)
     tensor-=maximum
     remaider_log_sum=torch.log(torch.sum(torch.exp(tensor)))
     result=remaider_log_sum+maximum
     return result
-def adaptive_integrate(point,direction,dist,samples=1000):
-    log_two=torch.log(torch.tensor(2.0))
-    logarithms=[]
-    logarithms.append([dist,0,neg_log_p(point+direction*dist,dist)])
-    for i in range(samples):
-        l=argmax_logs(logarithms)
-        logarithms[l][1]+=1
-        logarithms[l][2]-=log_two
-        new_dist=logarithms[l][0]-dist*(2**-logarithms[l][1])
-        logarithms.append([new_dist,logarithms[l][1],neg_log_p(point+direction*new_dist,new_dist)-log_two*logarithms[l][1]])
-    chunks=[]
-    for i in range(len(logarithms)):
-        chunks.append(logarithms[i][2])
-    print(chunks)
-    chunks=torch.tensor(chunks)
-    integral=logsumexp(chunks)
+def logsumexp_batch(tensor): #implements logsumexp trick for numerically stable adding of logarithms
+    maximum=torch.max(tensor,dim=-1)
+    tensor-=maximum
+    remaider_log_sum=torch.log(torch.sum(torch.exp(tensor),dim=-1))
+    result=remaider_log_sum+maximum
+    return result
+def fast_basic_integrate(point,direction,dist,samples=1000):
+    point=torch.unsqueeze(point,dim=-1)
+    direction=torch.unsqueeze(direction,dim=-1)
+    eval_dists=torch.linspace(0,dist,steps=samples)
+    eval_points=point+direction*eval_dists
+    results=neg_log_p(eval_points,eval_dists)
+    #print(results)
+    #print("dist is "+str(dist))
+    eval_sums=logsumexp(results)
+    #print("eval sums is "+str(eval_sums))
+    integral=eval_sums+torch.log(torch.tensor(dist).float())-torch.log(torch.tensor(samples).float())
+    return integral
+def fast_basic_integrate_batch(point,direction,dist,samples=1000):
+    point=torch.unsqueeze(point,dim=-2)
+    direction=torch.unsqueeze(direction,dim=-2)
+    eval_dists=torch.stack([torch.linspace(0,d,steps=samples) for d in dist],dim=0)
+    eval_dists=torch.unsqueeze(eval_dists,dim=-1)
+    eval_points=point+direction*eval_dists
+    results=neg_log_p_batch(eval_points,eval_dists)
+    #print(results)
+    #print("dist is "+str(dist))
+    eval_sums=logsumexp_batch(results)
+    #print("eval sums is "+str(eval_sums))
+    integral=eval_sums+torch.log(torch.tensor(dist).float())-torch.log(torch.tensor(samples).float())
     return integral
 def test_fn(point):
-    d=distance(point)-1/2
+    d=distance(point)-1
     s=torch.sigmoid(d)
     return torch.tensor([s,1-s])
+def distance(vector):
+    return torch.sum(vector**2,dim=-1)**(1/2)
 def random_dir_vector(size):
     x=torch.randn(size)
     x=x/distance(x)
     return x
+def random_dir_vector_batch(batch_size,size):
+    x=torch.stack([torch.randn(size) for i in range(batch_size)],dim=-1)
+    x=x/distance(x)
+    return x
 def make_grad(fn,center):
-    direction=random_dir_vector(['size'])
+    delta=.01 #how for back to go for finite differences calculation
+    direction=random_dir_vector(hparams['size'])
+    print("random direction is " + str(direction))
     root=find_root(fn,center,direction) #distance, and point of intersection
-    prob_integral=adaptive_integrate(center,direction,root[0])
+    print("root is " + str(root))
+    prob_integral=fast_basic_integrate(center,direction,root[0])
+    prob_integral_two=fast_basic_integrate(center-direction*delta,direction,root[0]+delta) #compute gradient of first point using finite differences
     end_p=neg_log_p(root[1],root[0])
-    grad=end_p/prob_integral*direction
-    return (root[1],grad)
+    print("end p is " + str(end_p))
+    print("logarithm of prob integral is " + str(prob_integral))
+    grad_end=torch.exp(end_p-prob_integral)*direction #Use formula for graient at end
+    #grad_start=(torch.exp(torch.tensor(prob_integral_two))-torch.exp(torch.tensor(prob_integral)))/delta*-direction
+    grad_start=torch.tensor(prob_integral_two-prob_integral)/delta*-direction #derivative of negative log of likelihood w/ finite differences. .
+    if(torch.sum(grad_start**2)>50):
+        grad_start=torch.zeros_like(grad_start)
+    return (root[1],grad_end,center,grad_start)
+def make_grad_batch(fn,center):
+    delta=.01 #how for back to go for finite differences calculation
+    direction=random_dir_vector_batch(hparams['batch_size'],hparams['size'])
+    print("random direction is " + str(direction))
+    root=find_root_batch(fn,center,direction) #distance, and point of intersection
+    print("root is " + str(root))
+    prob_integral=fast_basic_integrate_batch(center,direction,root[0])
+    prob_integral_two=fast_basic_integrate_batch(center-direction*delta,direction,root[0]+delta) #compute gradient of first point using finite differences
+    end_p=neg_log_p_batch(root[1],root[0])
+    print("end p is " + str(end_p))
+    print("logarithm of prob integral is " + str(prob_integral))
+    grad_end=torch.exp(end_p-prob_integral)*direction #Use formula for graient at end
+    #grad_start=(torch.exp(torch.tensor(prob_integral_two))-torch.exp(torch.tensor(prob_integral)))/delta*-direction
+    grad_start=torch.tensor(prob_integral_two-prob_integral)/delta*-direction #derivative of negative log of likelihood w/ finite differences. .
+    if(torch.sum(grad_start**2)>50):
+        grad_start=torch.zeros_like(grad_start)
+    return (root[1],grad_end,center,grad_start)
 def verify():
     batch=make_batch(hparams['channels'],hparams['batch_size'])
     passed=net(net.inverse(batch)[0])
     passedtwo=net.inverse(net(batch))[0]
     print(torch.mean(batch-passed))
     print(torch.mean(batch-passedtwo))
+def train_online():
+    for e in range(hparams['batches']):
+        y=[]
+        if(torch.randn(1)>0):
+            y=torch.tensor([[0,1]]).float()
+        else:
+            y=torch.tensor([[1,0]]).float()
+        fullcenter=net.inverse(y)[0]
+        center=fullcenter[0].detach()
+        print("center is " + str(center))
+        grad=make_grad(net,center)
+        print("Grad is" +str(grad))
+        print("")
 def train():
     for e in range(hparams['batches']):
         #10*make_normal_batch(hparams['batch_size'])
         target=make_batch(hparams['channels'],hparams['batch_size'])
         #print(target)
-        start=net.inverse(target)
-        distloss=negative_log_gaussian_density(start[0])/hparams['channels']
-        jacloss=start[1]/hparams['channels']
-        loss=distloss+jacloss
-        loss=torch.mean(loss)
-        if(e%1==0):
-            print("distribution loss " + str(torch.mean(distloss)))
-            print("Transformation loss " + str(torch.mean(jacloss)))
-            print(loss)
+        with torch.no_grad():
+            start=net.inverse(target)[0]
+        grads=make_grad_batch(net,start)
+        print(grads)
         if(e%500==0):
-            verify()
-            modelprint()
+            #verify()
+            #modelprint()
+            pass
         net.zero_grad()
         if(loss<50):
             loss.backward()
@@ -369,9 +435,13 @@ init_p=torch.tensor([0.0,0.0])
     print(neg_log_p(print_p,j))
     print()"""
 test_direction=random_dir_vector(2)
-d=find_root(test_fn,init_p,test_direction)
-log_vol_estimate=adaptive_integrate(init_p,test_direction,d[0]*.2,10000)
-print(log_vol_estimate)
+#d=find_root(test_fn,init_p,test_direction)
+#print(make_grad(test_fn,init_p))
+#graph_out(100,10)
+train_online()
+"""for i in range(50):
+    log_vol_estimate=fast_adaptive_integrate(init_p,test_direction,d[0]*i/20,3000)
+    print(log_vol_estimate)"""
 #verify()
 #graph_out(10,1)
 #trace_out(np.array((0,0)),np.array((1,1)),.1,20)
