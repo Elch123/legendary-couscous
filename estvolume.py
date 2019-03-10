@@ -239,11 +239,12 @@ def trace_out(start,direction,delta,num_points):
         plt.plot(out)
         plt.show()
 def mismatch(outa,outb):
-    ga=outa[0]>outa[1]
-    gb=outb[0] > outb[1]
-    if(ga != gb):
-        return True
-    return False
+    #print(outa.shape)
+    init=outa[:,0]>outa[:,1]
+    now=outb[:,0]>outb[:,1]
+    changed=(init!=now)
+    #print(changed)
+    return changed
 def find_root(fn,start,direction,start_scale=1e-6):
     #in_array=np.zeros(shape=(num_points,2))
     start_scale=torch.tensor(start_scale)
@@ -261,23 +262,42 @@ def find_root(fn,start,direction,start_scale=1e-6):
                 #print("scale is " + str(start_scale))
                 return start_scale,candidate_point
             start_scale*=2
-def find_root_batch(fn,start,direction,start_scale=1e-6):
+def find_root_batch(fn,start,direction,start_scale=1e-3):
     #in_array=np.zeros(shape=(num_points,2))
-    start_scale=torch.tensor(start_scale)
+    scales=torch.zeros(size=(hparams['batch_size'],1))
+    uppers=torch.zeros_like(scales)
+    lowers=torch.zeros_like(scales)
+    never=torch.zeros(size=(hparams['batch_size'],))
+    never[:]=1
+    scales*=torch.tensor(start_scale)
     #print("start scale" + str(start_scale))
     with torch.no_grad():
-        out=fn(torch.unsqueeze(start,dim=0)).detach().numpy()[0]
+        out=fn(start).detach()
         initial_out=out
         print(initial_out)
-        while(True):
-            candidate_point=start+direction*start_scale
-            out=fn(torch.unsqueeze(candidate_point,dim=0)).detach().numpy()[0]
-            #print("current out is " + str(out))
-            #print("scale is " + str(start_scale))
-            if(mismatch(initial_out,out) or start_scale>1e1):
-                #print("scale is " + str(start_scale))
-                return start_scale,candidate_point
-            start_scale*=2
+        for i in range(20):
+            #print(start.shape)
+            #print(direction.shape)
+            #print(scales.shape)
+            dists=direction*scales
+            candidate_point=start+dists
+            out=fn(candidate_point)
+            match=mismatch(initial_out,out)
+            for (j,val) in enumerate(match):
+                if(never[j]):
+                    if(not val):
+                        scales[j]*=2
+                    if(val):
+                        uppers[j]=scales[j]
+                        lowers[j]=scales[j]/2
+                        never[j]=0
+                else:
+                    if(val):
+                        uppers[j]=scales[j]
+                    else:
+                        lowers[j]=scales[j]
+                    scales[j]=(uppers[j]+lowers[j])/2
+        return candidate_point,out
 def neg_log_density(point):
     dimentions=len(point)
     log_gaussian_density=-torch.reduce_sum(point**2)-1/2*torch.log(torch.tensor(2*3.14159))
@@ -338,19 +358,19 @@ def test_fn(point):
     s=torch.sigmoid(d)
     return torch.tensor([s,1-s])
 def distance(vector):
-    return torch.sum(vector**2,dim=-1)**(1/2)
+    return torch.sum(vector**2,dim=0)**(1/2)
 def random_dir_vector(size):
     x=torch.randn(size)
     x=x/distance(x)
     return x
 def random_dir_vector_batch(batch_size,size):
-    x=torch.stack([torch.randn(size) for i in range(batch_size)],dim=-1)
+    x=torch.stack([torch.randn(size) for i in range(batch_size)],dim=0)
     x=x/distance(x)
     return x
 def make_grad(fn,center):
     delta=.01 #how for back to go for finite differences calculation
     direction=random_dir_vector(hparams['size'])
-    print("random direction is " + str(direction))
+    #print("random direction is " + str(direction))
     root=find_root(fn,center,direction) #distance, and point of intersection
     print("root is " + str(root))
     prob_integral=fast_basic_integrate(center,direction,root[0])
@@ -378,7 +398,7 @@ def make_grad_batch(fn,center):
     grad_end=torch.exp(end_p-prob_integral)*direction #Use formula for graient at end
     #grad_start=(torch.exp(torch.tensor(prob_integral_two))-torch.exp(torch.tensor(prob_integral)))/delta*-direction
     grad_start=torch.tensor(prob_integral_two-prob_integral)/delta*-direction #derivative of negative log of likelihood w/ finite differences. .
-    if(torch.sum(grad_start**2)>50):
+    if(torch.sum(grad_start**2)>500):
         grad_start=torch.zeros_like(grad_start)
     return (root[1],grad_end,center,grad_start)
 def verify():
@@ -438,7 +458,8 @@ test_direction=random_dir_vector(2)
 #d=find_root(test_fn,init_p,test_direction)
 #print(make_grad(test_fn,init_p))
 #graph_out(100,10)
-train_online()
+#train_online()
+train()
 """for i in range(50):
     log_vol_estimate=fast_adaptive_integrate(init_p,test_direction,d[0]*i/20,3000)
     print(log_vol_estimate)"""
