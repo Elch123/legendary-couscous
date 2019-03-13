@@ -336,7 +336,7 @@ def test_fn(batch):
     comp=torch.zeros_like(batch)
     comp[:]=batch[:]
     comp[:,1]*=2
-    d=distance(comp)
+    d=distance(comp)-5
     return torch.stack([d,1-d],dim=-1)
 def random_dir_vector_batch(batch_size,size):
     x=torch.stack([torch.randn(size) for i in range(batch_size)],dim=0)
@@ -347,25 +347,26 @@ def make_grad_batch(fn,center):
     direction=random_dir_vector_batch(hparams['batch_size'],hparams['size'])
     #print("random direction shape is " + str(direction.shape))
     root=find_root_batch(fn,center,direction) #distance, and point of intersection
-    print("root  is " + str(root))
+    #print("root  is " + str(root))
     prob_integral=fast_basic_integrate_batch(center,direction,root[0])
     prob_integral_two=fast_basic_integrate_batch(center-direction*delta,direction,root[0]+delta) #compute gradient of first point using finite differences
     #print(root[1].shape)
     #print(root[0].shape)
     end_p=neg_log_p_batch(root[1],torch.squeeze(root[0]))
-    print("end p is " + str(end_p))
-    print("logarithm of prob integral one is " + str(prob_integral))
-    print("logarithm of prob integral two is " + str(prob_integral_two))
+    #print("end p is " + str(end_p))
+    print("loss is "+str(-torch.mean(prob_integral)))
+    #print("logarithm of prob integral one is " + str(prob_integral))
+    #print("logarithm of prob integral two is " + str(prob_integral_two))
     grad_end_mag=torch.exp(end_p-prob_integral)
     grad_end_mag=torch.unsqueeze(grad_end_mag,dim=-1)
-    print("gradient magnitude at end is " + str(grad_end_mag))
+    #print("gradient magnitude at end is " + str(grad_end_mag))
     grad_end=grad_end_mag*direction #Use formula for graient at end
     #grad_start=(torch.exp(torch.tensor(prob_integral_two))-torch.exp(torch.tensor(prob_integral)))/delta*-direction
     grad_start_mag=torch.tensor(prob_integral_two-prob_integral)/delta
     grad_start_mag=torch.unsqueeze(grad_start_mag,dim=-1)
-    print("gradient magnitude at start is " + str(grad_start_mag))
+    #print("gradient magnitude at start is " + str(grad_start_mag))
     grad_start=-grad_start_mag*direction #derivative of negative log of likelihood w/ finite differences. Negative, because in opposite direction of random vector
-    if(torch.sum(grad_start**2)>500):
+    if(torch.sum(grad_start**2)/hparams['batch_size']>50):
         grad_start=torch.zeros_like(grad_start)
     return (root[1],grad_end,center,grad_start)
 def verify():
@@ -382,18 +383,22 @@ def train():
         #print(target)
         with torch.no_grad():
             start=net.inverse(target)[0]
-        #grads=make_grad_batch(net,start)
-        grads=make_grad_batch(test_fn,init_p)
-        print(grads)
+        grads=make_grad_batch(net,start)
+        #grads=make_grad_batch(test_fn,init_p)
+        all_points=torch.cat([grads[0],grads[2]],dim=0)
+        all_grads=torch.cat([grads[1],grads[3]],dim=0)
+        with torch.no_grad():
+            boundary_outs=net(all_points)
+        boundary_ins=net.inverse(boundary_outs)[0]
+        net.zero_grad()
+        boundary_ins.backward(-all_grads) #Negative, couse' were doin gradient descent, not gradient ascent
+        #print(grads)
+        #print("interated")
         if(e%500==0):
             #verify()
             #modelprint()
             pass
-        net.zero_grad()
-        if(loss<50):
-            loss.backward()
-        #torch.nn.utils.clip_grad_norm_(net.parameters(), 1)
-            optimizer.step()
+        optimizer.step()
 
 #verify()
 #train()

@@ -1,5 +1,5 @@
 hparams={
-'lr':.0001,
+'lr':.0000001,
 'batches':5000001,
 'size':2,
 'channels':2,
