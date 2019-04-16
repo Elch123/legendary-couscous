@@ -111,32 +111,41 @@ def find_root_batch(fn,start,direction,start_scale=1e-2):
             #print(start.shape)
             #print(direction.shape)
             #print(scales.shape)
+            #print("getting new points")
             dists=direction*scales
             candidate_point=start+dists
-            print("evaling fn")
+            #print("evaling fn")
             out=fn(candidate_point)
-            print("other stuff\n")
+            #print("bisecting\n")
             #print(candidate_point.shape)
             #print(out)
             match=mismatch(initial_out,out)
             #print(scales[:,0,0])
             out_of_bounds=scales[:,0,0]>200  #clip for accuracy in integration routine
-            match=(1-(1-match)*(1-out_of_bounds))#this is an OR operator Maybe use torch elementwise or if I can find it?
-
-            for (j,val) in enumerate(match):
+            mismatched=(1-(1-match)*(1-out_of_bounds))#this is an OR operator Maybe use torch elementwise or if I can find it?
+            #Must paralellize this slow code, or move to CPU, it's a bottleneck now!
+            """for (j,val) in enumerate(mismatched):
                 if(never[j]):
-                    if(not val):
+                    if(not val): #never=True,mismatch=False
                         scales[j]*=2
-                    if(val):
+                    if(val): #never=True,mismatch=True
                         uppers[j]=scales[j]
                         lowers[j]=scales[j]/2
                         never[j]=0
                 else:
-                    if(val):
+                    if(val): #Never=False,mismatch=True
                         uppers[j]=scales[j]
                     else:
-                        lowers[j]=scales[j]
-                    scales[j]=(uppers[j]+lowers[j])/2
+                        lowers[j]=scales[j] #Never=False,mismatch=False
+                    scales[j]=(uppers[j]+lowers[j])/2 #Never=False"""
+            mismatched=mismatched.float()
+            #Attempted paralell form: (Extememely ugly, but might just work if I make certain to hit every single case properly)
+            #print(scales.shape)
+            uppers[:,0,0]=(never*(1-mismatched))*uppers[:,0,0]+(never*mismatched)*scales[:,0,0]+  (1-never)*mismatched*scales[:,0,0]+(1-never)*(1-mismatched)*uppers[:,0,0]
+            lowers[:,0,0]=(never*(1-mismatched))*lowers[:,0,0]+(never*mismatched)*scales[:,0,0]/2+(1-never)*mismatched*lowers[:,0,0]+(1-never)*(1-mismatched)*scales[:,0,0]
+            scales[:,0,0]=(never*(1-mismatched))*2*scales[:,0,0]+(1-never)*(uppers[:,0,0]+lowers[:,0,0])/2+(never*mismatched)*scales[:,0,0] #all 4 cases hit
+            #print(scales.shape)
+            never=(1-never)*never+never*(1-mismatched)*never+never*mismatched*0
         dists=direction*scales
         candidate_point=start+dists
         return scales,candidate_point
