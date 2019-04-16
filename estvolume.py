@@ -6,8 +6,7 @@ from esthparams import hparams
 import matplotlib.pyplot as plt
 torch.set_printoptions(threshold=100000)
 #For all these classes, the inverse is the first return, the log determinant is the second
- #HAHA! make sure to be smart with the means I am taking, and not take a mean over the batch dimesion!!!
- #Sum logdet over channel dimension, don't mean over batch
+
 class Lin_bidirectional(nn.Module):
     def __init__(self,hparams):
         super().__init__()
@@ -94,7 +93,7 @@ class Affine(nn.Module):
         self.mults=torch.nn.Linear(hparams['channels']//2,hparams['channels']//2)
         self.adds=torch.nn.Linear(hparams['channels']//2,hparams['channels']//2)
         self.m_scale=nn.Parameter(torch.zeros(size=(hparams['channels']//2,)))
-        #self.add_scale=nn.Parameter(torch.zeros(size=(hparams['channels']//2,)))
+        self.add_scale=nn.Parameter(torch.zeros(size=(hparams['channels']//2,))+0.0)
     def compute_nets(self,x):
         prex=x
         x=self.act(x)
@@ -110,7 +109,7 @@ class Affine(nn.Module):
         x+=prex
         x=self.act(x)
         m=self.mults(x)*self.m_scale
-        a=self.adds(x)
+        a=self.adds(x)*self.add_scale
         return (m,a)
     def forward(self,data):
         x=data[:,0:self.hparams['channels']//2]
@@ -201,15 +200,25 @@ def negative_log_gaussian_density(data):
 x=make_normal_batch(hparams['channels'],hparams['batch_size'])
 #print(x)
 #print(net(x))
-def make_batch(size,batch_size):
+"""def make_batch(size,batch_size):
     dist=torch.distributions.OneHotCategorical(probs=torch.ones(size=(size,)))
     m = torch.distributions.MultivariateNormal(torch.zeros(size), scale_tril=torch.eye(size))
-    target=1*dist.sample((batch_size,))+.1*m.sample((batch_size,))
+    target=1*dist.sample((batch_size,))+0*m.sample((batch_size,))
+    return target"""
+def make_batch(size,batch_size):
+    dist=torch.distributions.OneHotCategorical(probs=torch.tensor([0.2,0.8]))
+    target=1*dist.sample((batch_size,))
     return target
 def modelprint():
     with torch.no_grad():
-        print(make_batch(hparams['channels'],hparams['batch_size']))
-        print(net(make_normal_batch(hparams['channels'],hparams['batch_size'])))
+        #print(make_batch(hparams['channels'],hparams['batch_size']))
+        output=net(make_normal_batch(hparams['channels'],hparams['batch_size']))
+        #print(output)
+        c=0
+        for i in output:
+            if i[0]>i[1]:
+                c+=1
+        print(c) #Count how many points are less, and how many are more
 def graph_out(points,bound):
     in_array=np.zeros(shape=(points,points,2))
     with torch.no_grad():
@@ -222,9 +231,11 @@ def graph_out(points,bound):
         in_array=torch.tensor(in_array).float()
         out=net(in_array).detach().numpy()
         out=out.reshape((points,points,2))
-        plt.imshow(out[:,:,0])
-        plt.show()
-        plt.imshow(out[:,:,1])
+        #plt.imshow(out[:,:,0])
+        #plt.show()
+        #plt.imshow(out[:,:,1])
+        #plt.show()
+        plt.imshow(out[:,:,0]-out[:,:,1])
         plt.show()
         print(out)
 def trace_out(start,direction,delta,num_points):
@@ -301,15 +312,8 @@ def neg_log_p_batch(point,dist):
     volume=(dimentions-1)*torch.log(dist)
     density=log_gaussian_density+volume
     return density
-def logsumexp(tensor): #implements logsumexp trick for numerically stable adding of logarithms
-    maximum=torch.max(tensor)
-    tensor-=maximum
-    remaider_log_sum=torch.log(torch.sum(torch.exp(tensor)))
-    result=remaider_log_sum+maximum
-    return result
 def logsumexp_batch(tensor): #implements logsumexp trick for numerically stable adding of logarithms
     maximum=torch.max(tensor,dim=-1)[0]
-
     tensor-=torch.unsqueeze(maximum,dim=-1)
     remaider_log_sum=torch.log(torch.sum(torch.exp(tensor),dim=-1))
     result=remaider_log_sum+maximum
@@ -383,6 +387,7 @@ def train():
         #print(target)
         with torch.no_grad():
             start=net.inverse(target)[0]
+        #start=start.transpose()
         grads=make_grad_batch(net,start)
         #grads=make_grad_batch(test_fn,init_p)
         all_points=torch.cat([grads[0],grads[2]],dim=0)
@@ -391,12 +396,15 @@ def train():
             boundary_outs=net(all_points)
         boundary_ins=net.inverse(boundary_outs)[0]
         net.zero_grad()
+        all_grads/=hparams['batch_size']
+        all_grads/=hparams['channels']
         boundary_ins.backward(-all_grads) #Negative, couse' were doin gradient descent, not gradient ascent
         #print(grads)
         #print("interated")
-        if(e%500==0):
+        if(e%20==0):
             #verify()
-            #modelprint()
+            modelprint()
+            #graph_out(100,5)
             pass
         optimizer.step()
 

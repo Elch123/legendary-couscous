@@ -16,6 +16,23 @@ class Conv1d(nn.Module):
         self.bias=Parameter(torch.zeros(size=(1,hparams['dim'],1,)))
         #self.register_parameter("b",self.bias)
     def forward(self,x):
+        return F.conv1d(x,self.linweight)+self.bias
+    def inverse(self,x):
+        x=x-self.bias
+        invlin=F.conv1d(x,torch.unsqueeze(torch.inverse(torch.squeeze(self.linweight)),-1))
+        logdet=-torch.slogdet(torch.squeeze(self.linweight))[1]#/self.hparams['dim']
+        #print("Conv logdet " + str(logdet))
+        return (invlin,logdet)
+class Conv1d_backward_optimized(nn.Module):
+    def __init__(self,hparams):
+        super().__init__()
+        self.hparams=hparams
+        self.linweight=Parameter(torch.empty(size=(hparams['dim'],hparams['dim'],1)))
+        torch.nn.init.orthogonal_(self.linweight) #orthogonal
+        #self.register_parameter("w",self.linweight)
+        self.bias=Parameter(torch.zeros(size=(1,hparams['dim'],1,)))
+        #self.register_parameter("b",self.bias)
+    def forward(self,x):
         return F.conv1d(x,torch.unsqueeze(torch.inverse(torch.squeeze(self.linweight)),-1))+self.bias
     def inverse(self,x):
         x=x-self.bias
@@ -195,9 +212,10 @@ class Head(nn.Module):
         x=x+self.encoding(x)
         x=self.act(x)
         x=self.convb(x)
-        q=self.attn(enc,x)
-        g=torch.tanh(self.gate(q+x))
-        x=g*q+x
+        if (enc is not None):
+            q=self.attn(enc,x)
+            g=torch.tanh(self.gate(q+x))
+            x=g*q+x
         return x
 class Tail(nn.Module):
     def __init__(self,hparams):
@@ -211,7 +229,7 @@ class Tail(nn.Module):
     def forward(self,x):
         x=self.act(x)
         m=torch.tanh(self.multiply_conv(x))*self.mscale
-        a=self.add_conv(x)#*self.ascale
+        a=self.add_conv(x)*self.ascale
         return (m,a)
 class Transform_block(nn.Module):
     def __init__(self,hparams):
@@ -288,8 +306,8 @@ class FC_block(nn.Module):
     def forward(self,x,enc):
         return self.act(self.lin(x),enc)
 
-    def inverse(self,x,encd):
-        postconv=self.act.inverse(x,encd)
+    def inverse(self,x,enc):
+        postconv=self.act.inverse(x,enc)
         start=self.lin.inverse(postconv[0])
         logdet=postconv[1]+start[1]
         return (start[0],logdet)
@@ -318,23 +336,28 @@ class Net(nn.Module):
         blocks=[]
         for i in range(hparams['blocks']):
             blocks.append(FC_block(hparams))
+            #pass
         blocks.append(Conv1d(hparams))
         self.blocks=nn.ModuleList(blocks)
         self.encoder=Encoder(hparams)
-    def forward(self,x,cond):
-        enc=self.encoder(cond)
+    def forward(self,x,cond=0):
+        enc=None
+        if(cond is not 0):
+            enc=self.encoder(cond)
         for block in self.blocks:
             if(type(block)==FC_block):
                 x=block(x,enc)
             else:
                 x=block(x)
         return x
-    def inverse(self,x,cond):
-        enc=self.encoder(cond)
+    def inverse(self,x,cond=0):
+        enc=None
+        if(cond is not 0):
+            enc=self.encoder(cond)
         state=[x,0] #current inverse, log determinant
         for block in reversed(self.blocks):
             inv=0
-            if(type(block)==FC_block): #Only feed conditioning to the affine layers, not the conv1d or any other layer types
+            if(type(block)==FC_block):
                 inv=block.inverse(state[0],enc)
             else:
                 inv=block.inverse(state[0])
