@@ -9,9 +9,20 @@ from embed import BpEmbed
 from makebatches import Batch_maker
 from blocks import Net
 from tensorboardX import SummaryWriter
-writer = SummaryWriter('/tmp/estvolume0004')
-
+import json
+from time import sleep
+"""with open("num_runs.json","w+") as f:
+    f.write(json.dumps(0))"""
+with open("num_runs.json","r+") as f:
+    #print(f.read())
+    run_count=json.loads(f.read())
+    print(run_count)
+    writer = SummaryWriter('/tmp/estvolume'+str(run_count).zfill(4))
+    run_count+=1
+    f.seek(0)
+    f.write(json.dumps(run_count))
 #tracemalloc.start()
+sleep(1)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 #device = "cpu"
 r_change=1000
@@ -208,6 +219,8 @@ def fast_basic_integrate_batch(fn,point,direction,dist,samples=3000):
 def make_grad_batch(fn,center,count=1):
     delta=.01 #how for back to go for finite differences calculation
     direction=random_dir_vector_like(center)
+    batch_size=direction.shape[0]
+    direction[batch_size//2:batch_size,:,:]=-direction[0:batch_size//2,:,:]
     root=find_root_batch(fn,center,direction) #magnitude_batch, and point of intersection
     prob_integral=fast_basic_integrate_batch(neg_log_p_batch,center,direction,root[0])
     log_numerator_start=fast_basic_integrate_batch(log_numerator_batch,center,direction,root[0])
@@ -262,9 +275,14 @@ def train():
         #verify_test(target)
         with torch.no_grad():
             start=net.inverse(target)[0]
-        classadist=+str(torch.mean(magnitude_batch(start)*(target[:,0,0]==0)))/torch.sum(target[:,0,0]==0)+.001)
+        #print(target[:,0,0])
+        class_zero_r=10
+        class_zero=torch.sum((target[:,0,0]==class_zero_r).float())+.001
+        #print(class_zero)
+        classadist=(torch.sum(magnitude_batch(start)*(target[:,0,0]==class_zero_r).float()))/class_zero
+        print(classadist)
         #print("center dists from zero are " +str(magnitude_batch(start)))
-        writer.add_scalar('Train/ClassAdist', classadist, count)
+        writer.add_scalar('Train/ClassAdist', classadist, e)
         start=start.permute(0,2,1)
         start=torch.cat([start,start],dim=0)#duplicate all points for opposite sampling V1
         grads=make_grad_batch(reshaped_net,start,e)

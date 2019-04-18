@@ -1,5 +1,5 @@
 hparams={
-'lr':.0001,
+'lr':.01,
 'batches':5000001,
 'batch_size':100,
 'blocks':15,
@@ -9,5 +9,4 @@ hparams={
 'embed_symbols':10000,
 'heads':5,
 'momentum':.9,
-#'blur_kernel':[.00135,.15730,.68269,.15730,.00135],
 }
