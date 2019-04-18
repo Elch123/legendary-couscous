@@ -8,10 +8,13 @@ import numpy as np
 from embed import BpEmbed
 from makebatches import Batch_maker
 from blocks import Net
+from tensorboardX import SummaryWriter
+writer = SummaryWriter('/tmp/estvolume0004')
+
 #tracemalloc.start()
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 #device = "cpu"
-r_change=1
+r_change=1000
 print(device)
 #engbpe=BpEmbed(hparams,bpemb_en)
 #debpe=BpEmbed(hparams,bpemb_de)
@@ -75,8 +78,8 @@ def binary_input_fn():
     batch=torch.zeros(size=(b_size,c,length))
     for i in range(b_size):
         #for j in range(length):
-        if(torch.rand(1)>0.5):
-            batch[i][0][0]=r_change+1
+        if(torch.rand(1)>0.0):
+            batch[i][0][0]=10#r_change+1
     return batch
 def test_eval_fn(batch):
     return batch
@@ -102,6 +105,7 @@ def find_root_batch(fn,start,direction,start_scale=1e-2):
     never=torch.zeros(size=(start.shape[0],), device=device)
     never[:]=1
     scales[:]=start_scale
+    scales[:,0,0]*=torch.rand(scales.shape[0], device=device)+1
     #print("start scale" + str(start_scale))
     with torch.no_grad():
         out=fn(start).detach()
@@ -201,44 +205,31 @@ def fast_basic_integrate_batch(fn,point,direction,dist,samples=3000):
     #in this dimention to make everything add up to 1
     #print("integral shape is "+str(integral.shape))
     return integral
-def make_grad_batch(fn,center):
+def make_grad_batch(fn,center,count=1):
     delta=.01 #how for back to go for finite differences calculation
     direction=random_dir_vector_like(center)
-    #print("random direction shape is " + str(direction.shape))
     root=find_root_batch(fn,center,direction) #magnitude_batch, and point of intersection
-    print("root distance is "+str(torch.squeeze(root[0])))
-    #print("root distance from zero is "+str(magnitude_batch(root[1])))
-    #print("root  is " + str(root))
     prob_integral=fast_basic_integrate_batch(neg_log_p_batch,center,direction,root[0])
-    #prob_integral_start_shifted=fast_basic_integrate_batch(neg_log_p_batch,center-direction*delta,direction,root[0]+delta) #compute gradient of first point using finite differences
-    #prob_integral_end_shifted=fast_basic_integrate_batch(neg_log_p_batch,center,direction,root[0]+delta) #compute gradient of last point using finite differences
     log_numerator_start=fast_basic_integrate_batch(log_numerator_batch,center,direction,root[0])
-    #print("log numerator start is "+str(log_numerator_start))
-    #Could also revert to using fundemental therom of calc 4 last point
-    #print(root[1].shape)
-    #print(root[0].shape)
     end_p=neg_log_p_batch(root[1],torch.squeeze(root[0]))
-    #print("end p is " + str(end_p))
-
     print("logarithm of prob integral is " + str(prob_integral))
-    #print("loss is "+str(-torch.mean(prob_integral)))
-    #print("logarithm of prob integral two is " + str(prob_integral_start_shifted))
-    #finite_grad_end_mag=torch.tensor(prob_integral_end_shifted-prob_integral)/delta
+    loss_ce=-torch.mean(prob_integral)
+    writer.add_scalar('Train/NLL', loss_ce, count)
+    print("mean log loss is "+str(loss_ce))
     grad_end_mag=torch.exp(end_p-prob_integral)
     #print("diff between grad end methods is " + str(grad_end_mag-finite_grad_end_mag))
     grad_end_mag=torch.reshape(grad_end_mag,(grad_end_mag.shape[0],1,1))
-    print("gradient magnitude at end is " + str(torch.squeeze(grad_end_mag)))
     grad_end=grad_end_mag*direction #Use formula for graient at end
-    #grad_start=(torch.exp(torch.tensor(prob_integral_start_shifted))-torch.exp(torch.tensor(prob_integral)))/delta*-direction
-    #finite_grad_start_mag=torch.tensor(prob_integral_start_shifted-prob_integral)/delta
     grad_start_mag=torch.exp(log_numerator_start-prob_integral)
     #print("diff between grad start methods is " + str(grad_start_mag-finite_grad_start_mag))
     grad_start_mag=torch.reshape(grad_start_mag,(grad_start_mag.shape[0],1,1))
-    print("gradient magnitude at start is " + str(torch.squeeze(grad_start_mag)))
-    grad_start=-grad_start_mag*direction #derivative of negative log of likelihood w/ finite differences. Negative, because in opposite direction of random vector
-    #print("direction is now " + str(direction))
-    #print("grad start is " + str(grad_start))
-
+    #print("gradient magnitude at start is " + str(torch.squeeze(grad_start_mag)))
+    if(count%20==0):
+        print("root distance is "+str(torch.squeeze(root[0])))
+        print("gradient magnitude at end is " + str(torch.squeeze(grad_end_mag)))
+        print("gradient magnitude at start is " + str(torch.squeeze(grad_start_mag)))
+    grad_start=-grad_start_mag*direction #derivative of negative log of likelihood w/ finite differences.
+    # Negative, because in opposite direction of random vector
     return (root[1],grad_end,center,grad_start)
 test_zero_point=torch.zeros(size=(10,8,6)).to(device)
 #direction=random_dir_vector_like(test_zero_point)
@@ -267,16 +258,19 @@ def train():
         #target=make_batch(hparams['batch_size'])
         target=binary_input_fn()
         target=target.to(device)
-        print("chosen locations are " + str(target[:,0,0]))
+        #print("chosen locations are " + str(target[:,0,0]))
         #verify_test(target)
         with torch.no_grad():
             start=net.inverse(target)[0]
-        print("center dists from zero are " +str(magnitude_batch(start)))
+        classadist=+str(torch.mean(magnitude_batch(start)*(target[:,0,0]==0)))/torch.sum(target[:,0,0]==0)+.001)
+        #print("center dists from zero are " +str(magnitude_batch(start)))
+        writer.add_scalar('Train/ClassAdist', classadist, count)
         start=start.permute(0,2,1)
-        grads=make_grad_batch(reshaped_net,start)
+        start=torch.cat([start,start],dim=0)#duplicate all points for opposite sampling V1
+        grads=make_grad_batch(reshaped_net,start,e)
         with torch.no_grad():
             mags=magnitude_batch(reshaped_net(make_normal_batch_like(start)))
-            print("forward pass of data is "+str(mags))
+            #print("forward pass of data is "+str(mags))
             print("data outside circle "+str(mags>r_change))
         all_points=torch.cat([grads[0],grads[2]],dim=0)
         all_grads=torch.cat([grads[1],grads[3]],dim=0)
@@ -288,7 +282,12 @@ def train():
         all_grads/=hparams['dim']
         boundary_ins.backward(-all_grads.permute(0,2,1))
         optimizer.step()
+        if(e%20==0):
+            print("chosen locations are " + str(target[:,0,0]))
+            print("center dists from zero are " +str(magnitude_batch(start)))
+            print("forward pass of data is "+str(mags))
         print("")
+
 #for i in range(100):
 #    print(logspherearea(torch.tensor(i).float()))
 #verify()

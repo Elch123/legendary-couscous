@@ -1,8 +1,8 @@
 hparams={
-'lr':.0002,
+'lr':.0001,
 'batches':5000001,
 'batch_size':100,
-'blocks':10,
+'blocks':15,
 'enc_blocks':6,
 'dim':10,
 'affine_dim':20,
