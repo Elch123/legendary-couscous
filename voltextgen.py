@@ -16,8 +16,9 @@ from time import sleep
 with open("num_runs.json","r+") as f:
     #print(f.read())
     run_count=json.loads(f.read())
-    print(run_count)
-    writer = SummaryWriter('/tmp/estvolume'+str(run_count).zfill(4))
+    path='/tmp/estvolume'+str(run_count).zfill(4)
+    print(path)
+    writer = SummaryWriter(path)
     run_count+=1
     f.seek(0)
     f.write(json.dumps(run_count))
@@ -25,7 +26,7 @@ with open("num_runs.json","r+") as f:
 sleep(1)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 #device = "cpu"
-r_change=1000
+r_change=4
 print(device)
 #engbpe=BpEmbed(hparams,bpemb_en)
 #debpe=BpEmbed(hparams,bpemb_de)
@@ -37,7 +38,8 @@ Updating the net for translation
 figure out how to wire the parts together
 translate!
 """
-optimizer = torch.optim.SGD(net.parameters(), lr=hparams['lr'], momentum=hparams['momentum'],nesterov=False)
+optimizer = torch.optim.Adam(net.parameters(), lr=hparams['lr'])#SGD  momentum=hparams['momentum'], ,nesterov=False
+optimizer = torch.optim.SGD(net.parameters(), lr=hparams['lr'],momentum=hparams['momentum'],nesterov=False)#SGD  , ,nesterov=False
 def reshaped_net(batch):
     net_in=batch.permute(0,2,1)
     result=net(net_in).permute(0,2,1)
@@ -85,14 +87,12 @@ def test_input_fn(batch):
 def binary_input_fn():
     b_size=hparams['batch_size']
     c=hparams['dim']
-    length=8
+    length=2
     batch=torch.zeros(size=(b_size,c,length))
     for i in range(b_size):
         #for j in range(length):
-        if(torch.rand(1)>0.0):
-            batch[i][0][0]=10#r_change+1
-    return batch
-def test_eval_fn(batch):
+        if(torch.rand(1)>0.5):
+            batch[i][0][0]=r_change+1
     return batch
 def random_dir_vector_like(batch):
     x=torch.randn(batch.numel(), device=device).reshape(batch.shape)
@@ -123,22 +123,16 @@ def find_root_batch(fn,start,direction,start_scale=1e-2):
         initial_out=out
         #print(initial_out)
         for i in range(40):
-            #print(start.shape)
-            #print(direction.shape)
-            #print(scales.shape)
-            #print("getting new points")
             dists=direction*scales
             candidate_point=start+dists
             #print("evaling fn")
             out=fn(candidate_point)
-            #print("bisecting\n")
-            #print(candidate_point.shape)
-            #print(out)
             match=mismatch(initial_out,out)
             #print(scales[:,0,0])
-            out_of_bounds=scales[:,0,0]>200  #clip for accuracy in integration routine
+            out_of_bounds=scales[:,0,0]>300  #clip for accuracy in integration routine
             mismatched=(1-(1-match)*(1-out_of_bounds))#this is an OR operator Maybe use torch elementwise or if I can find it?
             #Must paralellize this slow code, or move to CPU, it's a bottleneck now!
+            #This is a basic bisection root finding algorithm. It doubles the distance until the function changes sign, then starts bisecting.
             """for (j,val) in enumerate(mismatched):
                 if(never[j]):
                     if(not val): #never=True,mismatch=False
@@ -154,12 +148,11 @@ def find_root_batch(fn,start,direction,start_scale=1e-2):
                         lowers[j]=scales[j] #Never=False,mismatch=False
                     scales[j]=(uppers[j]+lowers[j])/2 #Never=False"""
             mismatched=mismatched.float()
-            #Attempted paralell form: (Extememely ugly, but might just work if I make certain to hit every single case properly)
+            #Paralell form: (Extememely ugly, but works because it hits every single case properly)
             #print(scales.shape)
             uppers[:,0,0]=(never*(1-mismatched))*uppers[:,0,0]+(never*mismatched)*scales[:,0,0]+  (1-never)*mismatched*scales[:,0,0]+(1-never)*(1-mismatched)*uppers[:,0,0]
             lowers[:,0,0]=(never*(1-mismatched))*lowers[:,0,0]+(never*mismatched)*scales[:,0,0]/2+(1-never)*mismatched*lowers[:,0,0]+(1-never)*(1-mismatched)*scales[:,0,0]
             scales[:,0,0]=(never*(1-mismatched))*2*scales[:,0,0]+(1-never)*(uppers[:,0,0]+lowers[:,0,0])/2+(never*mismatched)*scales[:,0,0] #all 4 cases hit
-            #print(scales.shape)
             never=(1-never)*never+never*(1-mismatched)*never+never*mismatched*0
         dists=direction*scales
         candidate_point=start+dists
@@ -167,7 +160,6 @@ def find_root_batch(fn,start,direction,start_scale=1e-2):
 def neg_log_p_batch(points,dist):
     dimentions=points.shape[-1]*points.shape[-2]
     area=logspherearea(torch.tensor(dimentions+0.0,device=device))
-    #print("dims are "+str(dimentions))
     sum_squared_terms=torch.sum(torch.sum(points**2,dim=-1),dim=-1)
     log_gaussian_density=-sum_squared_terms/2-dimentions/2*torch.log(torch.tensor(2*3.14159,device=device))
     log_volume=(dimentions-1)*torch.log(dist)
@@ -177,7 +169,6 @@ def log_numerator_batch(points,dist):
     dimentions=points.shape[-1]*points.shape[-2]
     dimentions=torch.tensor(dimentions+0.0,device=device)
     area=logspherearea(dimentions)
-    #print("dims are "+str(dimentions))
     sum_squared_terms=torch.sum(torch.sum(points**2,dim=-1),dim=-1)
     log_gaussian_density=-sum_squared_terms/2-dimentions/2*torch.log(torch.tensor(2*3.14159,device=device))
     log_volume=(dimentions-2)*torch.log(dist)
@@ -191,7 +182,7 @@ def logsumexp_batch(tensor): #implements logsumexp trick for numerically stable 
     remaider_log_sum=torch.log(torch.sum(torch.exp(tensor),dim=-1))
     result=remaider_log_sum+maximum
     return result
-def fast_basic_integrate_batch(fn,point,direction,dist,samples=3000):
+def fast_basic_integrate_batch(fn,point,direction,dist,samples=6000):
     dim=point.shape[-1]*point.shape[-2]
     #print("dim is "+str(dim))
     point=torch.unsqueeze(point,dim=1)
@@ -199,58 +190,93 @@ def fast_basic_integrate_batch(fn,point,direction,dist,samples=3000):
     eval_dists=torch.stack([torch.linspace(0,d.item(),steps=samples) for d in dist],dim=0).to(device)
     eval_dists_expanded=torch.unsqueeze(eval_dists,dim=-1)
     eval_dists_expanded=torch.unsqueeze(eval_dists_expanded,dim=-1)
-    #print("points shape is "+str(point.shape))
-    #print("directions shape is "+str(direction.shape))
-    #print("dists shape is "+str(eval_dists_expanded.shape))
     eval_points=point+direction*eval_dists_expanded
     #print("eval points shape is "+str(eval_points.shape))
     results=fn(eval_points,eval_dists)
     #print("results shape is " + str(results.shape))
     #print("dist is "+str(dist))
     eval_sums=logsumexp_batch(results)
-    #print("eval sums shape is "+str(eval_sums.shape))
-    #print("eval sums is "+str(eval_sums))
     distlog=torch.log(torch.squeeze(dist))
     integral=eval_sums-torch.log(torch.tensor(samples+0.0,device=device))+distlog #Distlog is to multiply by distance integrating over,
     #eval_sums is the sum of all samples, subtract log of samples to divide by number of samples,
     #in this dimention to make everything add up to 1
     #print("integral shape is "+str(integral.shape))
     return integral
-def make_grad_batch(fn,center,count=1):
-    delta=.01 #how for back to go for finite differences calculation
-    direction=random_dir_vector_like(center)
-    batch_size=direction.shape[0]
-    direction[batch_size//2:batch_size,:,:]=-direction[0:batch_size//2,:,:]
-    root=find_root_batch(fn,center,direction) #magnitude_batch, and point of intersection
+def integrals(center,direction,root):
     prob_integral=fast_basic_integrate_batch(neg_log_p_batch,center,direction,root[0])
     log_numerator_start=fast_basic_integrate_batch(log_numerator_batch,center,direction,root[0])
     end_p=neg_log_p_batch(root[1],torch.squeeze(root[0]))
-    print("logarithm of prob integral is " + str(prob_integral))
-    loss_ce=-torch.mean(prob_integral)
-    writer.add_scalar('Train/NLL', loss_ce, count)
-    print("mean log loss is "+str(loss_ce))
+    return (prob_integral,log_numerator_start,end_p)
+def error_fn_sphere(data):
+    return magnitude_batch(data)
+def make_normals(fn,point,error_fn):
+    net.zero_grad()
+    point.requires_grad=True
+    with torch.enable_grad():
+        output=torch.sum(error_fn(fn(point))) #Derive normals using the gradient being normal to level surfaces
+    output.backward()
+    scaled_normals=point.grad
+    normal_scales=magnitude_batch(scaled_normals)
+    normal_scales=torch.reshape(normal_scales,(normal_scales.shape[0],1,1))
+    normals=scaled_normals/normal_scales #Rescale the normals to have a length of one.
+    #print(magnitude_batch(normals)) #For now check the normals have a length of one.
+    net.zero_grad()
+    return normals
+def make_half_grad(fn,center,direction):
+    root=find_root_batch(fn,center,direction)
+    normals=make_normals(fn,root[1],error_fn_sphere)
+    flat_direction=torch.reshape(direction,(direction.shape[0],1,-1))
+    flat_normals=torch.reshape(normals,(normals.shape[0],-1,1))
+    dotted=torch.matmul(flat_direction,flat_normals)
+    (prob_integral,log_numerator_start,end_p)=integrals(center,direction,root)
     grad_end_mag=torch.exp(end_p-prob_integral)
-    #print("diff between grad end methods is " + str(grad_end_mag-finite_grad_end_mag))
-    grad_end_mag=torch.reshape(grad_end_mag,(grad_end_mag.shape[0],1,1))
-    grad_end=grad_end_mag*direction #Use formula for graient at end
+    grad_end_mag*=torch.squeeze(dotted)
     grad_start_mag=torch.exp(log_numerator_start-prob_integral)
-    #print("diff between grad start methods is " + str(grad_start_mag-finite_grad_start_mag))
+    return (root,grad_end_mag,grad_start_mag,prob_integral,normals)
+avggrad=10
+def make_grad_batch(fn,center,count=-1):
+    global avggrad #Probably better to refactor this into a class, maybe do later
+    delta=.01 #how for back to go for finite differences calculation
+    direction=random_dir_vector_like(center)
+    (roota,grad_end_mag_a,grad_start_mag_a,prob_integral_a,normals_a)=make_half_grad(fn,center,direction)
+    (rootb,grad_end_mag_b,grad_start_mag_b,prob_integral_b,normals_b)=make_half_grad(fn,center,-direction)
+    loss_ce=-torch.mean(prob_integral_a+prob_integral_b)/2
+    stddev=torch.std(prob_integral_a+prob_integral_b)/2
+    writer.add_scalar('Train/NLL', loss_ce, count)
+    writer.add_scalar('Train/Loss Standard Deviation', stddev, count)
+    print("mean log loss is "+str(loss_ce))
+    grad_end_mag=torch.cat([grad_end_mag_a,grad_end_mag_b],dim=0)
+    writer.add_scalar('Train/Unclamped grad end', torch.mean(grad_end_mag**2)**(1/2), count)
+    #grad_end_mag=torch.clamp(grad_end_mag,0,clamp_range)
+    grad_end_mag=torch.reshape(grad_end_mag,(grad_end_mag.shape[0],1,1))
+    #grad_end=grad_end_mag*torch.cat([direction,-direction]) #Use formula for graient at end
+    grad_end=grad_end_mag*torch.cat([normals_a,normals_b]) #Use formula for graient at end
+    grad_start_mag=grad_start_mag_a-grad_start_mag_b
+    writer.add_scalar('Train/Unclamped grad start', torch.mean(grad_start_mag**2)**1/2, count)
+    #clamp_range=20
+    #grad_start_mag=torch.clamp(grad_start_mag,-clamp_range,clamp_range)
+    #writer.add_scalar('Train/Clamped grad start', torch.mean(grad_start_mag), count)
     grad_start_mag=torch.reshape(grad_start_mag,(grad_start_mag.shape[0],1,1))
-    #print("gradient magnitude at start is " + str(torch.squeeze(grad_start_mag)))
-    if(count%20==0):
-        print("root distance is "+str(torch.squeeze(root[0])))
-        print("gradient magnitude at end is " + str(torch.squeeze(grad_end_mag)))
-        print("gradient magnitude at start is " + str(torch.squeeze(grad_start_mag)))
-    grad_start=-grad_start_mag*direction #derivative of negative log of likelihood w/ finite differences.
+    grad_start=-grad_start_mag*direction
+    end_points=torch.cat([roota[1],rootb[1]],dim=0)
+    all_points=torch.cat([end_points,center],dim=0)
+    all_grads=torch.cat([grad_end,grad_start],dim=0)
+    writer.add_scalar('Train/Maximum grad', torch.max(all_grads), count)
+    all_grad_mag=torch.mean(grad_start_mag**2)**1/2
+    smoothing=.95
+    avggrad=all_grad_mag*(1-smoothing)+avggrad*smoothing
+    if(count<150):
+        all_grads/=avggrad
+    writer.add_scalar('Train/Gradient moving average', avggrad, count)
     # Negative, because in opposite direction of random vector
-    return (root[1],grad_end,center,grad_start)
+    return (all_points,all_grads)
 test_zero_point=torch.zeros(size=(10,8,6)).to(device)
 #direction=random_dir_vector_like(test_zero_point)
 #test_root=find_root_batch(test_eval_fn,test_zero_point,direction)
 #test_integral=fast_basic_integrate_batch(test_zero_point,direction,test_root[0])
 #print(test_integral)
-grad=make_grad_batch(test_eval_fn,test_zero_point)
-print(grad)
+#grad=make_grad_batch(test_eval_fn,test_zero_point)
+#print(grad)
 def verify_test(batch):
     with torch.no_grad():
         print()
@@ -276,22 +302,22 @@ def train():
         with torch.no_grad():
             start=net.inverse(target)[0]
         #print(target[:,0,0])
-        class_zero_r=10
-        class_zero=torch.sum((target[:,0,0]==class_zero_r).float())+.001
-        #print(class_zero)
-        classadist=(torch.sum(magnitude_batch(start)*(target[:,0,0]==class_zero_r).float()))/class_zero
-        print(classadist)
+        class_a_zero=torch.sum((target[:,0,0]==0).float())+.001
+        classadist=(torch.sum(magnitude_batch(start)*(target[:,0,0]==0).float()))/class_a_zero
+        class_b_zero=torch.sum((target[:,0,0]==r_change+1).float())+.001
+        classbdist=(torch.sum(magnitude_batch(start)*(target[:,0,0]==r_change+1).float()))/class_b_zero
+        #print("class a distance is " +str(classadist))
         #print("center dists from zero are " +str(magnitude_batch(start)))
-        writer.add_scalar('Train/ClassAdist', classadist, e)
+        writer.add_scalar('Train/Class A dist', classadist, e)
+        writer.add_scalar('Train/Class B dist', classbdist, e)
         start=start.permute(0,2,1)
-        start=torch.cat([start,start],dim=0)#duplicate all points for opposite sampling V1
-        grads=make_grad_batch(reshaped_net,start,e)
         with torch.no_grad():
+            (all_points,all_grads)=make_grad_batch(reshaped_net,start,e)
             mags=magnitude_batch(reshaped_net(make_normal_batch_like(start)))
             #print("forward pass of data is "+str(mags))
-            print("data outside circle "+str(mags>r_change))
-        all_points=torch.cat([grads[0],grads[2]],dim=0)
-        all_grads=torch.cat([grads[1],grads[3]],dim=0)
+            outside_circle=mags>r_change
+            print("data outside circle "+str(outside_circle))
+            writer.add_scalar('Train/Points outside circle', torch.sum(outside_circle), e)
         with torch.no_grad():
             boundary_outs=net(all_points.permute(0,2,1))
         boundary_ins=net.inverse(boundary_outs)[0]
