@@ -228,10 +228,14 @@ def make_half_grad(fn,center,direction):
     flat_direction=torch.reshape(direction,(direction.shape[0],1,-1))
     flat_normals=torch.reshape(normals,(normals.shape[0],-1,1))
     dotted=torch.matmul(flat_direction,flat_normals)
+    #dotted=torch.abs(dotted) #I need to look into the orientation of these normal vectors, and understand it deeply
+    #This works without the abs, but I'm not certain why.
+    #I will need more mathematical understanding of this if I want to move on to more complex error functions and tasks.
     (prob_integral,log_numerator_start,end_p)=integrals(center,direction,root)
     grad_end_mag=torch.exp(end_p-prob_integral)
     grad_end_mag*=torch.squeeze(dotted)
     grad_start_mag=torch.exp(log_numerator_start-prob_integral)
+    #grad_start_mag*=torch.squeeze(dotted)
     return (root,grad_end_mag,grad_start_mag,prob_integral,normals)
 avggrad=10
 def make_grad_batch(fn,center,count=-1):
