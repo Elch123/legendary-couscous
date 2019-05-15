@@ -1,5 +1,5 @@
 hparams={
-'lr':.01,
+'lr':.002,
 'batches':5000001,
 'batch_size':50,
 'blocks':15,

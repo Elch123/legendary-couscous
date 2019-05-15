@@ -11,6 +11,7 @@ from blocks import Net
 from tensorboardX import SummaryWriter
 import json
 from time import sleep
+scale_max=300
 """with open("num_runs.json","w+") as f:
     f.write(json.dumps(0))"""
 with open("num_runs.json","r+") as f:
@@ -129,7 +130,7 @@ def find_root_batch(fn,start,direction,start_scale=1e-2):
             out=fn(candidate_point)
             match=mismatch(initial_out,out)
             #print(scales[:,0,0])
-            out_of_bounds=scales[:,0,0]>300  #clip for accuracy in integration routine
+            out_of_bounds=scales[:,0,0]>scale_max  #clip for accuracy in integration routine
             mismatched=(1-(1-match)*(1-out_of_bounds))#this is an OR operator Maybe use torch elementwise or if I can find it?
             #Must paralellize this slow code, or move to CPU, it's a bottleneck now!
             #This is a basic bisection root finding algorithm. It doubles the distance until the function changes sign, then starts bisecting.
@@ -209,7 +210,7 @@ def integrals(center,direction,root):
     return (prob_integral,log_numerator_start,end_p)
 def error_fn_sphere(data):
     return magnitude_batch(data)
-def make_normals(fn,point,error_fn):
+def make_normals(fn,point,error_fn): #The orientation of these normal vectors doesn't matter
     net.zero_grad()
     point.requires_grad=True
     with torch.enable_grad():
@@ -219,25 +220,22 @@ def make_normals(fn,point,error_fn):
     normal_scales=magnitude_batch(scaled_normals)
     normal_scales=torch.reshape(normal_scales,(normal_scales.shape[0],1,1))
     normals=scaled_normals/normal_scales #Rescale the normals to have a length of one.
-    #print(magnitude_batch(normals)) #For now check the normals have a length of one.
     net.zero_grad()
     return normals
 def make_half_grad(fn,center,direction):
     root=find_root_batch(fn,center,direction)
+    root_out_of_bounds=(root[0]>scale_max-.1).float() #Test to see if the root found was infinity
     normals=make_normals(fn,root[1],error_fn_sphere)
+    normals=root_out_of_bounds*direction+(1-root_out_of_bounds)*normals #Use the direction vector as the normal if it goes off to infinity.
     flat_direction=torch.reshape(direction,(direction.shape[0],1,-1))
     flat_normals=torch.reshape(normals,(normals.shape[0],-1,1))
     dotted=torch.matmul(flat_direction,flat_normals)
-    #dotted=torch.abs(dotted) #I need to look into the orientation of these normal vectors, and understand it deeply
-    #This works without the abs, but I'm not certain why.
-    #I will need more mathematical understanding of this if I want to move on to more complex error functions and tasks.
     (prob_integral,log_numerator_start,end_p)=integrals(center,direction,root)
     grad_end_mag=torch.exp(end_p-prob_integral)
     grad_end_mag*=torch.squeeze(dotted)
     grad_start_mag=torch.exp(log_numerator_start-prob_integral)
     #grad_start_mag*=torch.squeeze(dotted)
     return (root,grad_end_mag,grad_start_mag,prob_integral,normals)
-avggrad=10
 def make_grad_batch(fn,center,count=-1):
     global avggrad #Probably better to refactor this into a class, maybe do later
     delta=.01 #how for back to go for finite differences calculation
@@ -250,29 +248,19 @@ def make_grad_batch(fn,center,count=-1):
     writer.add_scalar('Train/Loss Standard Deviation', stddev, count)
     print("mean log loss is "+str(loss_ce))
     grad_end_mag=torch.cat([grad_end_mag_a,grad_end_mag_b],dim=0)
-    writer.add_scalar('Train/Unclamped grad end', torch.mean(grad_end_mag**2)**(1/2), count)
-    #grad_end_mag=torch.clamp(grad_end_mag,0,clamp_range)
     grad_end_mag=torch.reshape(grad_end_mag,(grad_end_mag.shape[0],1,1))
-    #grad_end=grad_end_mag*torch.cat([direction,-direction]) #Use formula for graient at end
     grad_end=grad_end_mag*torch.cat([normals_a,normals_b]) #Use formula for graient at end
-    grad_start_mag=grad_start_mag_a-grad_start_mag_b
-    writer.add_scalar('Train/Unclamped grad start', torch.mean(grad_start_mag**2)**1/2, count)
-    #clamp_range=20
-    #grad_start_mag=torch.clamp(grad_start_mag,-clamp_range,clamp_range)
-    #writer.add_scalar('Train/Clamped grad start', torch.mean(grad_start_mag), count)
-    grad_start_mag=torch.reshape(grad_start_mag,(grad_start_mag.shape[0],1,1))
-    grad_start=-grad_start_mag*direction
+    writer.add_scalar('Train/Grad end', torch.mean(grad_end**2)**(1/2), count)
+    #grad_start_mag=torch.cat([grad_start_mag_a,grad_start_mag_b],dim=0)
+    grad_start_mag_a=torch.reshape(grad_start_mag_a,(grad_start_mag_a.shape[0],1,1))
+    grad_start_mag_b=torch.reshape(grad_start_mag_b,(grad_start_mag_b.shape[0],1,1))
+    #writer.add_scalar('Train/Grad start', torch.mean(grad_start_mag**2)**1/2, count)
+    grad_start=-(grad_start_mag_a-grad_start_mag_b)*direction
+    writer.add_scalar('Train/Grad start', torch.mean(grad_start**2)**1/2, count)
     end_points=torch.cat([roota[1],rootb[1]],dim=0)
     all_points=torch.cat([end_points,center],dim=0)
     all_grads=torch.cat([grad_end,grad_start],dim=0)
     writer.add_scalar('Train/Maximum grad', torch.max(all_grads), count)
-    all_grad_mag=torch.mean(grad_start_mag**2)**1/2
-    smoothing=.95
-    avggrad=all_grad_mag*(1-smoothing)+avggrad*smoothing
-    if(count<150):
-        all_grads/=avggrad
-    writer.add_scalar('Train/Gradient moving average', avggrad, count)
-    # Negative, because in opposite direction of random vector
     return (all_points,all_grads)
 test_zero_point=torch.zeros(size=(10,8,6)).to(device)
 #direction=random_dir_vector_like(test_zero_point)
