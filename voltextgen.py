@@ -86,14 +86,11 @@ def magnitude_batch(vector):
 def test_input_fn(batch):
     return make_normal_batch(hparams['batch_size'],8,6)
 def argmax_error_fn(batch,labels): #Assume labels are in 1 hot form
-    print(batch.shape)
-    print(labels.shape)
     selected=torch.sum(batch*labels,dim=1) #torch.index_select
-    print(selected.shape)
     maxs=torch.max(batch*(1-labels),dim=1)
     error=maxs[0]-selected
     error=torch.max(error,dim=-1)
-    print("error is " +str(error))
+    #print("error is " +str(error))
     return error[0]
 def argmax_input_fn():
     b_size=hparams['batch_size']
@@ -106,7 +103,7 @@ def argmax_input_fn():
             batch[i,chan,j]=1
     return batch
 def argmax_mismatch(output,label):
-    return argmax_error_fn(output,label)<0
+    return argmax_error_fn(output,label)>0
 def binary_input_fn():
     b_size=hparams['batch_size']
     c=hparams['dim']
@@ -326,7 +323,7 @@ def train():
         #start=start.permute(0,2,1)
         with torch.no_grad():
             (all_points,all_grads)=make_grad_batch(net,start,target,e)
-            mags=magnitude_batch(reshaped_net(make_normal_batch_like(start)))
+            #mags=magnitude_batch(net(make_normal_batch_like(start)))
             #print("forward pass of data is "+str(mags))
             #outside_circle=mags>r_change
             #print("data outside circle "+str(outside_circle))
