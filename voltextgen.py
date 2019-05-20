@@ -85,6 +85,28 @@ def magnitude_batch(vector):
     return torch.sum(torch.sum(vector**2,-1),-1)**(1/2) #Sum all dim except 0
 def test_input_fn(batch):
     return make_normal_batch(hparams['batch_size'],8,6)
+def argmax_error_fn(batch,labels): #Assume labels are in 1 hot form
+    print(batch.shape)
+    print(labels.shape)
+    selected=torch.sum(batch*labels,dim=1) #torch.index_select
+    print(selected.shape)
+    maxs=torch.max(batch*(1-labels),dim=1)
+    error=maxs[0]-selected
+    error=torch.max(error,dim=-1)
+    print("error is " +str(error))
+    return error[0]
+def argmax_input_fn():
+    b_size=hparams['batch_size']
+    c=hparams['dim']
+    length=2
+    batch=torch.zeros(size=(b_size,c,length))
+    for i in range(b_size):
+        for j in range(length):
+            chan=(torch.rand(1)*c).long()
+            batch[i,chan,j]=1
+    return batch
+def argmax_mismatch(output,label):
+    return argmax_error_fn(output,label)<0
 def binary_input_fn():
     b_size=hparams['batch_size']
     c=hparams['dim']
@@ -109,7 +131,7 @@ def mismatch(outa,outb):
     changed=(init!=now)
     #print(changed)
     return changed
-def find_root_batch(fn,start,direction,start_scale=1e-2):
+def find_root_batch(fn,start,direction,labels,start_scale=1e-2):
     #in_array=np.zeros(shape=(num_points,2))
     scales=torch.zeros(size=(start.shape[0],1,1), device=device)
     uppers=torch.zeros_like(scales, device=device)
@@ -128,7 +150,7 @@ def find_root_batch(fn,start,direction,start_scale=1e-2):
             candidate_point=start+dists
             #print("evaling fn")
             out=fn(candidate_point)
-            match=mismatch(initial_out,out)
+            match=argmax_mismatch(out,labels)
             #print(scales[:,0,0])
             out_of_bounds=scales[:,0,0]>scale_max  #clip for accuracy in integration routine
             mismatched=(1-(1-match)*(1-out_of_bounds))#this is an OR operator Maybe use torch elementwise or if I can find it?
@@ -150,7 +172,7 @@ def find_root_batch(fn,start,direction,start_scale=1e-2):
                     scales[j]=(uppers[j]+lowers[j])/2 #Never=False"""
             mismatched=mismatched.float()
             #Paralell form: (Extememely ugly, but works because it hits every single case properly)
-            #print(scales.shape)
+            #This is equivilent to the commented out routine above, read that to understatnd how this works
             uppers[:,0,0]=(never*(1-mismatched))*uppers[:,0,0]+(never*mismatched)*scales[:,0,0]+  (1-never)*mismatched*scales[:,0,0]+(1-never)*(1-mismatched)*uppers[:,0,0]
             lowers[:,0,0]=(never*(1-mismatched))*lowers[:,0,0]+(never*mismatched)*scales[:,0,0]/2+(1-never)*mismatched*lowers[:,0,0]+(1-never)*(1-mismatched)*scales[:,0,0]
             scales[:,0,0]=(never*(1-mismatched))*2*scales[:,0,0]+(1-never)*(uppers[:,0,0]+lowers[:,0,0])/2+(never*mismatched)*scales[:,0,0] #all 4 cases hit
@@ -208,13 +230,12 @@ def integrals(center,direction,root):
     log_numerator_start=fast_basic_integrate_batch(log_numerator_batch,center,direction,root[0])
     end_p=neg_log_p_batch(root[1],torch.squeeze(root[0]))
     return (prob_integral,log_numerator_start,end_p)
-def error_fn_sphere(data):
-    return magnitude_batch(data)
-def make_normals(fn,point,error_fn): #The orientation of these normal vectors doesn't matter
+
+def make_normals(fn,point,error_fn,labels): #The orientation of these normal vectors doesn't matter
     net.zero_grad()
     point.requires_grad=True
     with torch.enable_grad():
-        output=torch.sum(error_fn(fn(point))) #Derive normals using the gradient being normal to level surfaces
+        output=torch.sum(error_fn(fn(point),labels)) #Derive normals using the gradient being normal to level surfaces
     output.backward()
     scaled_normals=point.grad
     normal_scales=magnitude_batch(scaled_normals)
@@ -222,10 +243,10 @@ def make_normals(fn,point,error_fn): #The orientation of these normal vectors do
     normals=scaled_normals/normal_scales #Rescale the normals to have a length of one.
     net.zero_grad()
     return normals
-def make_half_grad(fn,center,direction):
-    root=find_root_batch(fn,center,direction)
+def make_half_grad(fn,center,direction,labels):
+    root=find_root_batch(fn,center,direction,labels)
     root_out_of_bounds=(root[0]>scale_max-.1).float() #Test to see if the root found was infinity
-    normals=make_normals(fn,root[1],error_fn_sphere)
+    normals=make_normals(fn,root[1],argmax_error_fn,labels)
     normals=root_out_of_bounds*direction+(1-root_out_of_bounds)*normals #Use the direction vector as the normal if it goes off to infinity.
     flat_direction=torch.reshape(direction,(direction.shape[0],1,-1))
     flat_normals=torch.reshape(normals,(normals.shape[0],-1,1))
@@ -236,12 +257,12 @@ def make_half_grad(fn,center,direction):
     grad_start_mag=torch.exp(log_numerator_start-prob_integral)
     #grad_start_mag*=torch.squeeze(dotted)
     return (root,grad_end_mag,grad_start_mag,prob_integral,normals)
-def make_grad_batch(fn,center,count=-1):
+def make_grad_batch(fn,center,labels,count=-1):
     global avggrad #Probably better to refactor this into a class, maybe do later
     delta=.01 #how for back to go for finite differences calculation
     direction=random_dir_vector_like(center)
-    (roota,grad_end_mag_a,grad_start_mag_a,prob_integral_a,normals_a)=make_half_grad(fn,center,direction)
-    (rootb,grad_end_mag_b,grad_start_mag_b,prob_integral_b,normals_b)=make_half_grad(fn,center,-direction)
+    (roota,grad_end_mag_a,grad_start_mag_a,prob_integral_a,normals_a)=make_half_grad(fn,center,direction,labels)
+    (rootb,grad_end_mag_b,grad_start_mag_b,prob_integral_b,normals_b)=make_half_grad(fn,center,-direction,labels)
     loss_ce=-torch.mean(prob_integral_a+prob_integral_b)/2
     stddev=torch.std(prob_integral_a+prob_integral_b)/2
     writer.add_scalar('Train/NLL', loss_ce, count)
@@ -287,41 +308,41 @@ def train():
             #modelprint()
             pass
         #target=make_batch(hparams['batch_size'])
-        target=binary_input_fn()
+        target=argmax_input_fn()
         target=target.to(device)
         #print("chosen locations are " + str(target[:,0,0]))
         #verify_test(target)
         with torch.no_grad():
             start=net.inverse(target)[0]
         #print(target[:,0,0])
-        class_a_zero=torch.sum((target[:,0,0]==0).float())+.001
-        classadist=(torch.sum(magnitude_batch(start)*(target[:,0,0]==0).float()))/class_a_zero
-        class_b_zero=torch.sum((target[:,0,0]==r_change+1).float())+.001
-        classbdist=(torch.sum(magnitude_batch(start)*(target[:,0,0]==r_change+1).float()))/class_b_zero
+        #class_a_zero=torch.sum((target[:,0,0]==0).float())+.001
+        #classadist=(torch.sum(magnitude_batch(start)*(target[:,0,0]==0).float()))/class_a_zero
+        #class_b_zero=torch.sum((target[:,0,0]==r_change+1).float())+.001
+        #classbdist=(torch.sum(magnitude_batch(start)*(target[:,0,0]==r_change+1).float()))/class_b_zero
         #print("class a distance is " +str(classadist))
         #print("center dists from zero are " +str(magnitude_batch(start)))
-        writer.add_scalar('Train/Class A dist', classadist, e)
-        writer.add_scalar('Train/Class B dist', classbdist, e)
-        start=start.permute(0,2,1)
+        #writer.add_scalar('Train/Class A dist', classadist, e)
+        #writer.add_scalar('Train/Class B dist', classbdist, e)
+        #start=start.permute(0,2,1)
         with torch.no_grad():
-            (all_points,all_grads)=make_grad_batch(reshaped_net,start,e)
+            (all_points,all_grads)=make_grad_batch(net,start,target,e)
             mags=magnitude_batch(reshaped_net(make_normal_batch_like(start)))
             #print("forward pass of data is "+str(mags))
-            outside_circle=mags>r_change
-            print("data outside circle "+str(outside_circle))
-            writer.add_scalar('Train/Points outside circle', torch.sum(outside_circle), e)
+            #outside_circle=mags>r_change
+            #print("data outside circle "+str(outside_circle))
+            #writer.add_scalar('Train/Points outside circle', torch.sum(outside_circle), e)
         with torch.no_grad():
-            boundary_outs=net(all_points.permute(0,2,1))
+            boundary_outs=net(all_points)
         boundary_ins=net.inverse(boundary_outs)[0]
         net.zero_grad()
         all_grads/=hparams['batch_size']
         all_grads/=hparams['dim']
-        boundary_ins.backward(-all_grads.permute(0,2,1))
+        boundary_ins.backward(-all_grads)
         optimizer.step()
         if(e%20==0):
             print("chosen locations are " + str(target[:,0,0]))
             print("center dists from zero are " +str(magnitude_batch(start)))
-            print("forward pass of data is "+str(mags))
+            #print("forward pass of data is "+str(mags))
         print("")
 
 #for i in range(100):
